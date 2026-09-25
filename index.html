@@ -19,7 +19,8 @@
     .sub{color:var(--muted);font-size:.9rem;line-height:1.45;margin-bottom:14px}
     .card{background:var(--panel);border:1px solid var(--line);border-radius:16px;padding:14px;margin:12px 0}
     .hero{text-align:center;background:var(--panel2);border:1px solid var(--line);border-radius:14px;padding:19px 12px}
-    .prediction{font-size:2.2rem;font-weight:850;letter-spacing:.01em;margin:5px 0 2px}
+    .predicted-price{font-size:2.45rem;font-weight:850;letter-spacing:.01em;margin:5px 0 8px}
+    .prediction{font-size:1.65rem;font-weight:850;letter-spacing:.01em;margin:5px 0 2px}
     .prediction.higher{color:var(--up)}
     .prediction.lower{color:var(--down)}
     .prediction.loading{color:var(--neutral)}
@@ -59,7 +60,9 @@
 
   <section class="card">
     <div class="hero">
-      <div class="label" id="heroLabel">Current locked prediction</div>
+      <div class="label" id="heroLabel">Predicted 15-minute close</div>
+      <div id="predictedPrice" class="predicted-price">—</div>
+      <div class="label">Direction & calibrated confidence</div>
       <div id="prediction" class="prediction loading">CALIBRATING…</div>
       <div id="heroStatus" class="status">Loading historical data and fitting the probability model.</div>
     </div>
@@ -347,6 +350,33 @@
     return clamp(sigmoid(m.a+m.b*score),0.001,0.999);
   }
 
+  function median(values){
+    if(!values.length) return NaN;
+    var s=values.slice().sort(function(a,b){return a-b;});
+    var mid=Math.floor(s.length/2);
+    return s.length%2 ? s[mid] : (s[mid-1]+s[mid])/2;
+  }
+
+  function fitMoveModel(train){
+    var byScore={};
+    for(var target=-9;target<=9;target++){
+      var nearby=train.filter(function(x){return Math.abs(x.score-target)<=1;});
+      if(nearby.length<30){
+        nearby=train.filter(function(x){return Math.abs(x.score-target)<=2;});
+      }
+      if(nearby.length<20) nearby=train;
+      var mags=nearby.map(function(x){return Math.abs(x.logReturn);}).filter(Number.isFinite);
+      byScore[target]=clamp(median(mags),0.00001,0.03);
+    }
+    return byScore;
+  }
+
+  function moveMagnitude(score,m){
+    var key=String(Math.round(clamp(score,-9,9)));
+    var v=m.moveByScore && Number(m.moveByScore[key]);
+    return Number.isFinite(v) ? v : 0.001;
+  }
+
   function evaluate(samples,m){
     var correct=0,brier=0;
     for(var i=0;i<samples.length;i++){
@@ -435,7 +465,8 @@
         score:signal.score,
         y:current.close>current.open ? 1 : 0,
         open:current.open,
-        close:current.close
+        close:current.close,
+        logReturn:Math.log(current.close/current.open)
       });
     }
     if(samples.length>MAX_WINDOWS) samples=samples.slice(-MAX_WINDOWS);
@@ -457,11 +488,13 @@
     var train=samples.slice(0,split);
     var test=samples.slice(split);
     var fitted=fitLogistic(train);
+    var moveByScore=fitMoveModel(train);
     var metrics=evaluate(test,fitted);
 
     model={
       a:fitted.a,
       b:fitted.b,
+      moveByScore:moveByScore,
       samples:samples.length,
       train:train.length,
       test:test.length,
@@ -570,6 +603,9 @@
     var pHigher=probabilityHigher(s.score,model);
     var direction=pHigher>=0.5 ? "Higher" : "Lower";
     var confidence=direction==="Higher" ? pHigher : 1-pHigher;
+    var predictedMove=moveMagnitude(s.score,model);
+    var signedMove=direction==="Higher" ? predictedMove : -predictedMove;
+    var predictedPrice=currentCandle.open*Math.exp(signedMove);
 
     settlePreviousIfPossible(null,currentCandle.open,start);
 
@@ -577,6 +613,13 @@
     var existing=stored.find(function(x){return x.start===start;});
     if(existing){
       currentPrediction=existing;
+      if(!Number.isFinite(currentPrediction.predictedPrice)){
+        currentPrediction.predictedPrice=predictedPrice;
+        currentPrediction.predictedMove=predictedMove;
+        var existingIndex=stored.findIndex(function(x){return x.start===start;});
+        if(existingIndex>=0) stored[existingIndex]=currentPrediction;
+        savePredictionHistory(stored);
+      }
     }else{
       currentPrediction={
         start:start,
@@ -586,6 +629,8 @@
         confidence:confidence,
         pHigher:pHigher,
         score:s.score,
+        predictedPrice:predictedPrice,
+        predictedMove:predictedMove,
         createdAt:Date.now()
       };
       stored.push(currentPrediction);
@@ -601,12 +646,13 @@
     var p=el("prediction");
     p.textContent=currentPrediction.direction+" "+(currentPrediction.confidence*100).toFixed(1)+"%";
     p.className="prediction "+(currentPrediction.direction==="Higher"?"higher":"lower");
+    el("predictedPrice").textContent=fmtMoney(currentPrediction.predictedPrice);
     el("lockedPrice").textContent=fmtMoney(currentPrediction.lockedPrice);
     el("windowTime").textContent=timeOnly(currentPrediction.start)+" → "+timeOnly(currentPrediction.end);
     el("signalScore").textContent=(currentPrediction.score>0?"+":"")+currentPrediction.score.toFixed(1);
     el("heroStatus").textContent=
       "Locked at "+timeOnly(currentPrediction.start)+
-      ". Probability was calibrated from the 70% historical training segment and will not change during this window.";
+      ". The price estimate uses the median 15-minute move from similar-score windows in the 70% calibration set; the confidence and price remain locked for this window.";
   }
 
   function updateCountdown(){
@@ -648,6 +694,7 @@
     setError("");
     model=null;
     currentPrediction=null;
+    el("predictedPrice").textContent="—";
     el("prediction").textContent="CALIBRATING…";
     el("prediction").className="prediction loading";
     el("heroStatus").textContent="Loading historical data and fitting the probability model.";
