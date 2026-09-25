@@ -3,81 +3,78 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
-  <meta name="theme-color" content="#111827" />
-  <title>BTC 15-Minute Signal</title>
+  <meta name="theme-color" content="#0b1020" />
+  <title>Sixcents BTC Quarter-Hour Model</title>
   <style>
-    :root {
-      color-scheme: dark;
-      --bg:#0b1020; --panel:#111827; --panel2:#182033; --text:#f3f4f6;
-      --muted:#9ca3af; --line:#273244; --up:#34d399; --down:#fb7185;
-      --neutral:#fbbf24; --accent:#60a5fa;
+    :root{
+      color-scheme:dark;
+      --bg:#0b1020;--panel:#111827;--panel2:#182033;--text:#f3f4f6;
+      --muted:#9ca3af;--line:#273244;--up:#34d399;--down:#fb7185;
+      --neutral:#fbbf24;--accent:#60a5fa;
     }
-    * { box-sizing: border-box; }
-    body {
-      margin:0; font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Arial,sans-serif;
-      background:var(--bg); color:var(--text); min-height:100vh;
-    }
-    main { max-width:760px; margin:0 auto; padding:16px 14px 28px; }
-    h1 { margin:0 0 4px; font-size:1.45rem; }
-    .sub { color:var(--muted); font-size:.92rem; margin-bottom:14px; }
-    .card {
-      background:var(--panel); border:1px solid var(--line); border-radius:16px;
-      padding:14px; margin:12px 0;
-    }
-    .signal-wrap { display:grid; gap:10px; grid-template-columns:1fr 1fr; }
-    .signal {
-      grid-column:1/-1; text-align:center; padding:18px 10px; border-radius:14px;
-      background:var(--panel2); border:1px solid var(--line);
-    }
-    .signal .big { font-size:2rem; font-weight:800; letter-spacing:.04em; }
-    .UP .big { color:var(--up); } .DOWN .big { color:var(--down); }
-    .NEUTRAL .big { color:var(--neutral); }
-    .metric { background:var(--panel2); border:1px solid var(--line); border-radius:12px; padding:11px; }
-    .label { color:var(--muted); font-size:.78rem; margin-bottom:4px; }
-    .value { font-size:1.04rem; font-weight:700; overflow-wrap:anywhere; }
-    .row { display:flex; gap:10px; align-items:center; justify-content:space-between; flex-wrap:wrap; }
-    button {
-      min-height:44px; border:0; border-radius:12px; padding:0 16px;
-      font-size:1rem; font-weight:700; background:var(--accent); color:#07111f;
-    }
-    button:disabled { opacity:.55; }
-    .status { color:var(--muted); font-size:.88rem; }
-    table { width:100%; border-collapse:collapse; font-size:.86rem; }
-    th,td { text-align:left; border-bottom:1px solid var(--line); padding:8px 5px; }
-    th { color:var(--muted); font-weight:600; }
-    .pos { color:var(--up); } .neg { color:var(--down); } .neu { color:var(--neutral); }
-    .small { color:var(--muted); font-size:.78rem; line-height:1.4; }
-    .error { color:#fecaca; background:#3f1720; border:1px solid #7f1d1d; padding:10px; border-radius:10px; display:none; }
-    @media (max-width:420px) {
-      .signal-wrap { grid-template-columns:1fr; }
-      .signal { grid-column:auto; }
-      main { padding-left:10px; padding-right:10px; }
+    *{box-sizing:border-box}
+    body{margin:0;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Arial,sans-serif;background:var(--bg);color:var(--text);min-height:100vh}
+    main{max-width:760px;margin:0 auto;padding:16px 14px 30px}
+    h1{margin:0 0 4px;font-size:1.45rem}
+    .sub{color:var(--muted);font-size:.9rem;line-height:1.45;margin-bottom:14px}
+    .card{background:var(--panel);border:1px solid var(--line);border-radius:16px;padding:14px;margin:12px 0}
+    .hero{text-align:center;background:var(--panel2);border:1px solid var(--line);border-radius:14px;padding:19px 12px}
+    .prediction{font-size:2.2rem;font-weight:850;letter-spacing:.01em;margin:5px 0 2px}
+    .prediction.higher{color:var(--up)}
+    .prediction.lower{color:var(--down)}
+    .prediction.loading{color:var(--neutral)}
+    .label{color:var(--muted);font-size:.78rem;margin-bottom:4px}
+    .value{font-size:1.04rem;font-weight:750;overflow-wrap:anywhere}
+    .grid{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:10px}
+    .metric{background:var(--panel2);border:1px solid var(--line);border-radius:12px;padding:11px;min-width:0}
+    .row{display:flex;gap:10px;align-items:center;justify-content:space-between;flex-wrap:wrap}
+    .status{color:var(--muted);font-size:.86rem;line-height:1.4}
+    .progress{height:8px;border-radius:999px;background:#202a3d;overflow:hidden;margin-top:10px}
+    .progress>div{height:100%;width:0%;background:var(--accent);transition:width .2s ease}
+    button{min-height:44px;border:0;border-radius:12px;padding:0 15px;font-size:.96rem;font-weight:750;background:var(--accent);color:#07111f}
+    button:disabled{opacity:.55}
+    .error{display:none;color:#fecaca;background:#3f1720;border:1px solid #7f1d1d;padding:10px;border-radius:10px;margin-top:10px;font-size:.86rem;line-height:1.4}
+    .ok{color:var(--up)}
+    .warn{color:var(--neutral)}
+    table{width:100%;border-collapse:collapse;font-size:.84rem}
+    th,td{text-align:left;border-bottom:1px solid var(--line);padding:8px 5px;vertical-align:top}
+    th{color:var(--muted);font-weight:650}
+    .small{color:var(--muted);font-size:.78rem;line-height:1.5}
+    .pill{display:inline-block;border:1px solid var(--line);border-radius:999px;padding:4px 8px;font-size:.73rem;color:var(--muted);margin:3px 3px 0 0}
+    .history-item{display:grid;grid-template-columns:1.1fr .8fr .8fr;gap:7px;padding:8px 0;border-bottom:1px solid var(--line);font-size:.8rem}
+    .history-item:last-child{border-bottom:0}
+    @media(max-width:420px){
+      .grid{grid-template-columns:1fr 1fr}
+      main{padding-left:10px;padding-right:10px}
+      .prediction{font-size:2rem}
+      .history-item{grid-template-columns:1fr 1fr}
+      .history-item span:last-child{grid-column:1/-1}
     }
   </style>
 </head>
 <body>
 <main>
-  <h1>BTC 15-Minute Signal</h1>
-  <div class="sub">Uses the prior ~60 minutes of 1-minute BTC/USD candles. Official windows align to :00, :15, :30 and :45.</div>
+  <h1>Sixcents — BTC 15-Minute Model</h1>
+  <div class="sub">Quarter-hour predictions are locked to :00, :15, :30 and :45. Each prediction asks one question: will BTC/USD finish the 15-minute window above or below the price locked at the window start?</div>
 
   <section class="card">
-    <div class="signal-wrap">
-      <div id="signalBox" class="signal NEUTRAL">
-        <div class="label">Current signal</div>
-        <div id="signal" class="big">LOADING</div>
-        <div id="confidence" class="status">—</div>
+    <div class="hero">
+      <div class="label" id="heroLabel">Current locked prediction</div>
+      <div id="prediction" class="prediction loading">CALIBRATING…</div>
+      <div id="heroStatus" class="status">Loading historical data and fitting the probability model.</div>
+    </div>
+    <div class="grid">
+      <div class="metric">
+        <div class="label">Locked start price</div>
+        <div id="lockedPrice" class="value">—</div>
       </div>
       <div class="metric">
-        <div class="label">BTC/USD</div>
-        <div id="price" class="value">—</div>
+        <div class="label">Live BTC/USD</div>
+        <div id="livePrice" class="value">—</div>
       </div>
       <div class="metric">
-        <div class="label">Score</div>
-        <div id="score" class="value">—</div>
-      </div>
-      <div class="metric">
-        <div class="label">Next quarter boundary</div>
-        <div id="targetTime" class="value">—</div>
+        <div class="label">Window</div>
+        <div id="windowTime" class="value">—</div>
       </div>
       <div class="metric">
         <div class="label">Time remaining</div>
@@ -89,279 +86,610 @@
   <section class="card">
     <div class="row">
       <div>
-        <div class="value">Indicator breakdown</div>
-        <div id="updated" class="status">Not updated yet</div>
+        <div class="value">Automated historical calibration</div>
+        <div id="backtestStatus" class="status">Preparing 90 days of 15-minute BTC/USD candles…</div>
       </div>
-      <button id="refreshBtn" type="button">Refresh</button>
+      <button id="rerunBtn" type="button">Re-run</button>
     </div>
-    <div id="error" class="error" style="margin-top:10px"></div>
-    <div style="overflow-x:auto;margin-top:10px">
-      <table>
-        <thead><tr><th>Indicator</th><th>Value</th><th>Vote</th></tr></thead>
-        <tbody id="indicatorRows"></tbody>
-      </table>
+    <div class="progress" aria-label="Backtest progress"><div id="progressBar"></div></div>
+    <div id="error" class="error"></div>
+    <div class="grid">
+      <div class="metric">
+        <div class="label">Historical windows</div>
+        <div id="totalWindows" class="value">—</div>
+      </div>
+      <div class="metric">
+        <div class="label">70% calibration</div>
+        <div id="trainWindows" class="value">—</div>
+      </div>
+      <div class="metric">
+        <div class="label">30% out-of-sample</div>
+        <div id="testWindows" class="value">—</div>
+      </div>
+      <div class="metric">
+        <div class="label">OOS directional accuracy</div>
+        <div id="oosAccuracy" class="value">—</div>
+      </div>
+      <div class="metric">
+        <div class="label">OOS Brier score</div>
+        <div id="brier" class="value">—</div>
+      </div>
+      <div class="metric">
+        <div class="label">Model score</div>
+        <div id="signalScore" class="value">—</div>
+      </div>
+    </div>
+    <p class="small" id="rangeText">The split is chronological, not randomized. The model is fitted only on the first 70% and then frozen before the last 30% is evaluated.</p>
+  </section>
+
+  <section class="card">
+    <div class="value">No-look-ahead design</div>
+    <p class="small">For historical window <strong>i</strong>, the locked price is that 15-minute candle's open and every indicator is calculated only from candles that ended before window <strong>i</strong> began. The candle's close is used only afterward as the Higher/Lower outcome. The 70/30 split occurs on a clean quarter-hour boundary, and the 30% verification segment never participates in calibration.</p>
+    <div>
+      <span class="pill">EMA 9 / 21</span>
+      <span class="pill">MACD 12 / 26 / 9</span>
+      <span class="pill">RSI 14</span>
+      <span class="pill">1-hour rolling VWAP</span>
+      <span class="pill">Bollinger %B</span>
+      <span class="pill">15m momentum</span>
+      <span class="pill">Volume confirmation</span>
     </div>
   </section>
 
   <section class="card">
-    <div class="value">How version 1 decides</div>
-    <p class="small">
-      Weighted votes come from EMA 9/21 trend, MACD 12/26/9, RSI 14, 60-minute VWAP,
-      Bollinger position, 15-minute price momentum, and recent volume confirmation.
-      A score of +3 or more = UP, -3 or less = DOWN, otherwise NEUTRAL.
-      This is a heuristic signal, not a guaranteed forecast or trading instruction.
-    </p>
-    <p class="small">
-      The page refreshes market data every 30 seconds while it is open. Mobile browsers may suspend
-      JavaScript when the tab is backgrounded or the phone is locked, so do not rely on this page
-      alone for unattended alerts.
-    </p>
+    <div class="value">Recent locked windows on this device</div>
+    <div id="history" class="small" style="margin-top:8px">No completed local predictions yet.</div>
   </section>
 </main>
 
 <script>
-(() => {
+(function(){
   "use strict";
 
-  const API = "https://api.kraken.com/0/public/OHLC?pair=XBTUSD&interval=1";
-  const $ = id => document.getElementById(id);
-  let busy = false;
+  var PRODUCT = "BTC-USD";
+  var API = "https://api.exchange.coinbase.com";
+  var BAR_MS = 15 * 60 * 1000;
+  var HISTORY_DAYS = 90;
+  var MIN_WINDOWS = 3000;
+  var MAX_WINDOWS = 10000;
+  var CACHE_KEY = "sixcents_history_v3";
+  var CACHE_TTL = 6 * 60 * 60 * 1000;
+  var PRED_KEY = "sixcents_predictions_v3";
 
-  const fmtMoney = n => Number.isFinite(n)
-    ? n.toLocaleString(undefined, {style:"currency", currency:"USD", maximumFractionDigits:2})
-    : "—";
+  var model = null;
+  var completedCandles = [];
+  var currentPrediction = null;
+  var busy = false;
 
-  const fmtNum = (n, digits=2) => Number.isFinite(n) ? n.toFixed(digits) : "—";
-
-  function nextQuarterBoundary(now = new Date()) {
-    const t = now.getTime();
-    const q = 15 * 60 * 1000;
-    return new Date(Math.ceil((t + 250) / q) * q);
+  function el(id){ return document.getElementById(id); }
+  function sleep(ms){ return new Promise(function(resolve){ setTimeout(resolve, ms); }); }
+  function clamp(n,a,b){ return Math.max(a,Math.min(b,n)); }
+  function fmtMoney(n){
+    return Number.isFinite(n) ? n.toLocaleString(undefined,{style:"currency",currency:"USD",maximumFractionDigits:2}) : "—";
+  }
+  function fmtPct(n,d){
+    return Number.isFinite(n) ? (n*100).toFixed(d == null ? 1 : d) + "%" : "—";
+  }
+  function intervalStartMs(ts){ return Math.floor(ts / BAR_MS) * BAR_MS; }
+  function iso(ms){ return new Date(ms).toISOString(); }
+  function timeOnly(ms){
+    return new Date(ms).toLocaleTimeString([], {hour:"numeric",minute:"2-digit"});
+  }
+  function dateShort(ms){
+    return new Date(ms).toLocaleDateString([], {month:"short",day:"numeric"});
+  }
+  function setError(msg){
+    var e = el("error");
+    e.textContent = msg || "";
+    e.style.display = msg ? "block" : "none";
+  }
+  function setProgress(p,label){
+    el("progressBar").style.width = clamp(p,0,100).toFixed(0) + "%";
+    if(label) el("backtestStatus").textContent = label;
   }
 
-  function updateCountdown() {
-    const target = nextQuarterBoundary();
-    $("targetTime").textContent = target.toLocaleTimeString([], {hour:"numeric", minute:"2-digit"});
-    const ms = Math.max(0, target.getTime() - Date.now());
-    const m = Math.floor(ms / 60000);
-    const s = Math.floor((ms % 60000) / 1000);
-    $("countdown").textContent = `${m}:${String(s).padStart(2,"0")}`;
-  }
-
-  function emaSeries(values, period) {
-    if (values.length < period) return [];
-    const k = 2 / (period + 1);
-    const out = [];
-    let prev = values.slice(0, period).reduce((a,b)=>a+b,0) / period;
-    for (let i = 0; i < values.length; i++) {
-      if (i < period - 1) out.push(NaN);
-      else if (i === period - 1) out.push(prev);
-      else {
-        prev = values[i] * k + prev * (1-k);
+  function emaSeries(values, period){
+    if(values.length < period) return [];
+    var k = 2/(period+1), out=[], sum=0, prev;
+    for(var i=0;i<period;i++) sum += values[i];
+    prev = sum/period;
+    for(var j=0;j<values.length;j++){
+      if(j < period-1) out.push(NaN);
+      else if(j === period-1) out.push(prev);
+      else{
+        prev = values[j]*k + prev*(1-k);
         out.push(prev);
       }
     }
     return out;
   }
 
-  function rsi(values, period=14) {
-    if (values.length < period + 1) return NaN;
-    let gains = 0, losses = 0;
-    for (let i = 1; i <= period; i++) {
-      const d = values[i] - values[i-1];
-      gains += Math.max(d, 0);
-      losses += Math.max(-d, 0);
+  function rsi(values, period){
+    period = period || 14;
+    if(values.length < period+1) return NaN;
+    var gains=0, losses=0, i, d;
+    for(i=1;i<=period;i++){
+      d=values[i]-values[i-1];
+      gains += Math.max(d,0);
+      losses += Math.max(-d,0);
     }
-    let avgGain = gains / period, avgLoss = losses / period;
-    for (let i = period + 1; i < values.length; i++) {
-      const d = values[i] - values[i-1];
-      avgGain = (avgGain * (period-1) + Math.max(d,0)) / period;
-      avgLoss = (avgLoss * (period-1) + Math.max(-d,0)) / period;
+    var avgGain=gains/period, avgLoss=losses/period;
+    for(i=period+1;i<values.length;i++){
+      d=values[i]-values[i-1];
+      avgGain=(avgGain*(period-1)+Math.max(d,0))/period;
+      avgLoss=(avgLoss*(period-1)+Math.max(-d,0))/period;
     }
-    if (avgLoss === 0) return 100;
-    const rs = avgGain / avgLoss;
-    return 100 - (100 / (1 + rs));
+    if(avgLoss===0) return 100;
+    var rs=avgGain/avgLoss;
+    return 100-(100/(1+rs));
   }
 
-  function macd(values) {
-    const fast = emaSeries(values, 12);
-    const slow = emaSeries(values, 26);
-    const line = values.map((_,i) =>
-      Number.isFinite(fast[i]) && Number.isFinite(slow[i]) ? fast[i]-slow[i] : NaN
-    );
-    const valid = line.filter(Number.isFinite);
-    const signalValid = emaSeries(valid, 9);
-    const signal = signalValid.length ? signalValid[signalValid.length-1] : NaN;
-    const current = valid.length ? valid[valid.length-1] : NaN;
-    return { line: current, signal, hist: current - signal };
+  function macd(values){
+    var fast=emaSeries(values,12), slow=emaSeries(values,26), line=[];
+    for(var i=0;i<values.length;i++){
+      line.push(Number.isFinite(fast[i]) && Number.isFinite(slow[i]) ? fast[i]-slow[i] : NaN);
+    }
+    var valid=line.filter(Number.isFinite);
+    var sig=emaSeries(valid,9);
+    var m=valid.length ? valid[valid.length-1] : NaN;
+    var s=sig.length ? sig[sig.length-1] : NaN;
+    return {line:m, signal:s, hist:m-s};
   }
 
-  function bollinger(values, period=20, mult=2) {
-    if (values.length < period) return {mid:NaN, upper:NaN, lower:NaN, pctB:NaN};
-    const s = values.slice(-period);
-    const mid = s.reduce((a,b)=>a+b,0) / period;
-    const variance = s.reduce((a,b)=>a + Math.pow(b-mid,2),0) / period;
-    const sd = Math.sqrt(variance);
-    const upper = mid + mult*sd, lower = mid - mult*sd;
-    const price = values[values.length-1];
-    const pctB = upper === lower ? 0.5 : (price-lower)/(upper-lower);
-    return {mid, upper, lower, pctB};
+  function bollinger(values, period){
+    period=period||20;
+    if(values.length<period) return {pctB:NaN};
+    var s=values.slice(-period), mean=0, i;
+    for(i=0;i<s.length;i++) mean+=s[i];
+    mean/=period;
+    var variance=0;
+    for(i=0;i<s.length;i++) variance += Math.pow(s[i]-mean,2);
+    variance/=period;
+    var sd=Math.sqrt(variance), upper=mean+2*sd, lower=mean-2*sd;
+    var price=values[values.length-1];
+    return {pctB: upper===lower ? 0.5 : (price-lower)/(upper-lower)};
   }
 
-  function calcVWAP(candles) {
-    let pv = 0, vol = 0;
-    for (const c of candles) {
-      const typical = (c.high + c.low + c.close) / 3;
-      pv += typical * c.volume;
+  function rollingVWAP(candles){
+    var pv=0, vol=0;
+    for(var i=0;i<candles.length;i++){
+      var c=candles[i];
+      var typical=(c.high+c.low+c.close)/3;
+      pv += typical*c.volume;
       vol += c.volume;
     }
-    return vol > 0 ? pv / vol : NaN;
+    return vol>0 ? pv/vol : NaN;
   }
 
-  function voteLabel(v) {
-    if (v > 0) return `<span class="pos">+${v}</span>`;
-    if (v < 0) return `<span class="neg">${v}</span>`;
-    return `<span class="neu">0</span>`;
+  function computeSignal(history){
+    if(history.length < 40) return null;
+    var h=history.slice(-80);
+    var closes=h.map(function(c){ return c.close; });
+    var ema9s=emaSeries(closes,9), ema21s=emaSeries(closes,21);
+    var ema9=ema9s[ema9s.length-1], ema21=ema21s[ema21s.length-1];
+    var m=macd(closes);
+    var r=rsi(closes,14);
+    var bb=bollinger(closes,20);
+    var last=h[h.length-1], prev=h[h.length-2];
+    var vwap=rollingVWAP(h.slice(-4));
+    var mom=((last.close/prev.close)-1)*100;
+
+    var priorVol=h.slice(-5,-1);
+    var avgVol=0;
+    for(var i=0;i<priorVol.length;i++) avgVol+=priorVol[i].volume;
+    avgVol=priorVol.length ? avgVol/priorVol.length : 0;
+    var volRatio=avgVol>0 ? last.volume/avgVol : 1;
+
+    var score=0;
+    score += ema9>ema21 ? 2 : ema9<ema21 ? -2 : 0;
+    score += m.hist>0 ? 2 : m.hist<0 ? -2 : 0;
+    score += r>=55 ? 1 : r<=45 ? -1 : 0;
+    score += last.close>vwap ? 1 : last.close<vwap ? -1 : 0;
+    score += bb.pctB>0.55 ? 1 : bb.pctB<0.45 ? -1 : 0;
+    score += mom>0.05 ? 1 : mom<-0.05 ? -1 : 0;
+    if(volRatio>=1.20) score += mom>0 ? 1 : mom<0 ? -1 : 0;
+
+    return {
+      score:score,
+      ema9:ema9,
+      ema21:ema21,
+      macdHist:m.hist,
+      rsi:r,
+      vwap:vwap,
+      pctB:bb.pctB,
+      momentum:mom,
+      volumeRatio:volRatio
+    };
   }
 
-  function setError(msg="") {
-    const el = $("error");
-    el.textContent = msg;
-    el.style.display = msg ? "block" : "none";
+  function sigmoid(z){
+    if(z>=0){
+      var ez=Math.exp(-z);
+      return 1/(1+ez);
+    }
+    var e=Math.exp(z);
+    return e/(1+e);
   }
 
-  function parseKraken(payload) {
-    if (!payload || !payload.result) throw new Error("Unexpected market-data response.");
-    if (Array.isArray(payload.error) && payload.error.length) throw new Error(payload.error.join(", "));
-    const key = Object.keys(payload.result).find(k => k !== "last");
-    if (!key) throw new Error("BTC/USD candles were not found.");
-    return payload.result[key].map(r => ({
-      time: Number(r[0]),
-      open: Number(r[1]),
-      high: Number(r[2]),
-      low: Number(r[3]),
-      close: Number(r[4]),
-      vwap: Number(r[5]),
-      volume: Number(r[6]),
-      count: Number(r[7])
-    })).filter(c => [c.open,c.high,c.low,c.close,c.volume].every(Number.isFinite));
+  function fitLogistic(samples){
+    var positives=0;
+    for(var i=0;i<samples.length;i++) positives += samples[i].y;
+    var mean=clamp(positives/samples.length,0.001,0.999);
+    var a=Math.log(mean/(1-mean));
+    var b=0;
+    var ridge=0.01;
+
+    for(var iter=0;iter<60;iter++){
+      var g0=0,g1=0,h00=0,h01=0,h11=ridge;
+      for(i=0;i<samples.length;i++){
+        var x=samples[i].score, y=samples[i].y;
+        var p=sigmoid(a+b*x);
+        var w=Math.max(1e-8,p*(1-p));
+        g0 += p-y;
+        g1 += (p-y)*x;
+        h00 += w;
+        h01 += w*x;
+        h11 += w*x*x;
+      }
+      g1 += ridge*b;
+      var det=h00*h11-h01*h01;
+      if(!Number.isFinite(det) || Math.abs(det)<1e-12) break;
+      var da=(h11*g0-h01*g1)/det;
+      var db=(-h01*g0+h00*g1)/det;
+      a -= da;
+      b -= db;
+      if(Math.abs(da)+Math.abs(db)<1e-8) break;
+    }
+    return {a:a,b:b};
   }
 
-  function analyze(allCandles) {
-    if (allCandles.length < 60) throw new Error("Not enough candle history to calculate the indicators.");
-
-    const hist = allCandles.slice(-180);
-    const hour = allCandles.slice(-60);
-    const closes = hist.map(c => c.close);
-    const price = closes[closes.length-1];
-
-    const ema9s = emaSeries(closes,9), ema21s = emaSeries(closes,21);
-    const ema9 = ema9s[ema9s.length-1], ema21 = ema21s[ema21s.length-1];
-    const rsi14 = rsi(closes,14);
-    const m = macd(closes);
-    const bb = bollinger(closes,20,2);
-    const vwap60 = calcVWAP(hour);
-
-    const close15Ago = allCandles.length >= 16 ? allCandles[allCandles.length-16].close : NaN;
-    const mom15 = Number.isFinite(close15Ago) ? ((price/close15Ago)-1)*100 : NaN;
-
-    const recent5 = hour.slice(-5).reduce((s,c)=>s+c.volume,0) / Math.max(1, hour.slice(-5).length);
-    const prior15 = hour.slice(-20,-5).reduce((s,c)=>s+c.volume,0) / Math.max(1, hour.slice(-20,-5).length);
-    const volRatio = prior15 > 0 ? recent5/prior15 : 1;
-
-    let score = 0;
-    const rows = [];
-
-    let v = ema9 > ema21 ? 2 : ema9 < ema21 ? -2 : 0;
-    score += v;
-    rows.push(["EMA 9 vs 21", `${fmtMoney(ema9)} / ${fmtMoney(ema21)}`, v]);
-
-    v = m.hist > 0 ? 2 : m.hist < 0 ? -2 : 0;
-    score += v;
-    rows.push(["MACD histogram", fmtNum(m.hist,2), v]);
-
-    v = rsi14 >= 55 && rsi14 <= 72 ? 1 :
-        rsi14 <= 45 && rsi14 >= 28 ? -1 :
-        rsi14 > 78 ? -0.5 :
-        rsi14 < 22 ? 0.5 : 0;
-    score += v;
-    rows.push(["RSI 14", fmtNum(rsi14,1), v]);
-
-    v = price > vwap60 ? 1 : price < vwap60 ? -1 : 0;
-    score += v;
-    rows.push(["60m VWAP", fmtMoney(vwap60), v]);
-
-    v = bb.pctB > 0.55 && bb.pctB < 1.05 ? 1 :
-        bb.pctB < 0.45 && bb.pctB > -0.05 ? -1 :
-        bb.pctB >= 1.05 ? -0.5 :
-        bb.pctB <= -0.05 ? 0.5 : 0;
-    score += v;
-    rows.push(["Bollinger %B", fmtNum(bb.pctB,2), v]);
-
-    v = mom15 > 0.05 ? 1 : mom15 < -0.05 ? -1 : 0;
-    score += v;
-    rows.push(["15m momentum", `${fmtNum(mom15,3)}%`, v]);
-
-    v = volRatio >= 1.20 ? (mom15 > 0 ? 1 : mom15 < 0 ? -1 : 0) : 0;
-    score += v;
-    rows.push(["Volume confirmation", `${fmtNum(volRatio,2)}×`, v]);
-
-    const signal = score >= 3 ? "UP" : score <= -3 ? "DOWN" : "NEUTRAL";
-    const maxAbs = 9;
-    const directionalStrength = Math.min(1, Math.abs(score)/maxAbs);
-    const confidence = signal === "NEUTRAL"
-      ? Math.round(50 - Math.min(15, Math.abs(score)*4))
-      : Math.round(52 + directionalStrength*36);
-
-    return {price, score, signal, confidence, rows};
+  function probabilityHigher(score,m){
+    return clamp(sigmoid(m.a+m.b*score),0.001,0.999);
   }
 
-  function render(a) {
-    $("signal").textContent = a.signal;
-    $("signalBox").className = `signal ${a.signal}`;
-    $("confidence").textContent = a.signal === "NEUTRAL"
-      ? "No strong directional edge"
-      : `Signal strength: ${a.confidence}%`;
-    $("price").textContent = fmtMoney(a.price);
-    $("score").textContent = `${a.score > 0 ? "+" : ""}${fmtNum(a.score,1)}`;
-
-    $("indicatorRows").innerHTML = a.rows.map(([name,value,v]) =>
-      `<tr><td>${name}</td><td>${value}</td><td>${voteLabel(v)}</td></tr>`
-    ).join("");
-
-    $("updated").textContent = `Updated ${new Date().toLocaleTimeString([], {hour:"numeric",minute:"2-digit",second:"2-digit"})}`;
+  function evaluate(samples,m){
+    var correct=0,brier=0;
+    for(var i=0;i<samples.length;i++){
+      var p=probabilityHigher(samples[i].score,m);
+      var pred=p>=0.5 ? 1 : 0;
+      if(pred===samples[i].y) correct++;
+      brier += Math.pow(p-samples[i].y,2);
+    }
+    return {
+      accuracy:samples.length ? correct/samples.length : NaN,
+      brier:samples.length ? brier/samples.length : NaN
+    };
   }
 
-  async function refresh() {
-    if (busy) return;
-    busy = true;
-    $("refreshBtn").disabled = true;
-    setError("");
-    try {
-      const res = await fetch(API, {cache:"no-store"});
-      if (!res.ok) throw new Error(`Market-data request failed (${res.status}).`);
-      const payload = await res.json();
-      const candles = parseKraken(payload);
-      render(analyze(candles));
-    } catch (err) {
-      setError(`${err.message} Reload the page and check your internet connection.`);
-      $("signal").textContent = "ERROR";
-      $("signalBox").className = "signal NEUTRAL";
-    } finally {
-      busy = false;
-      $("refreshBtn").disabled = false;
+  async function apiJSON(path){
+    var res=await fetch(API+path,{cache:"no-store",headers:{"Accept":"application/json"}});
+    if(!res.ok) throw new Error("Coinbase market-data request failed ("+res.status+").");
+    return res.json();
+  }
+
+  function parseCandleRow(r){
+    return {
+      time:Number(r[0])*1000,
+      low:Number(r[1]),
+      high:Number(r[2]),
+      open:Number(r[3]),
+      close:Number(r[4]),
+      volume:Number(r[5])
+    };
+  }
+
+  async function fetchHistorical90d(force){
+    var now=Date.now();
+    if(!force){
+      try{
+        var cached=JSON.parse(localStorage.getItem(CACHE_KEY)||"null");
+        if(cached && now-cached.savedAt<CACHE_TTL && Array.isArray(cached.candles) && cached.candles.length>4000){
+          setProgress(45,"Using cached historical candles…");
+          return cached.candles;
+        }
+      }catch(e){}
+    }
+
+    var currentStart=intervalStartMs(now);
+    var end=currentStart;
+    var start=currentStart-HISTORY_DAYS*24*60*60*1000;
+    var chunkBars=299;
+    var totalSpan=end-start;
+    var all=new Map();
+    var cursor=start;
+    var requestNo=0;
+    var totalReq=Math.ceil(totalSpan/(chunkBars*BAR_MS));
+
+    while(cursor<=end){
+      var chunkEnd=Math.min(end,cursor+chunkBars*BAR_MS);
+      var path="/products/"+PRODUCT+"/candles?granularity=900&start="+encodeURIComponent(iso(cursor))+"&end="+encodeURIComponent(iso(chunkEnd));
+      var rows=await apiJSON(path);
+      for(var i=0;i<rows.length;i++){
+        var c=parseCandleRow(rows[i]);
+        if(Number.isFinite(c.time) && c.time>=start && c.time<=end) all.set(c.time,c);
+      }
+      requestNo++;
+      setProgress(5+40*(requestNo/Math.max(1,totalReq)),"Downloading 90-day history: "+requestNo+" / "+totalReq+" chunks");
+      cursor=chunkEnd+BAR_MS;
+      await sleep(140);
+    }
+
+    var candles=Array.from(all.values()).sort(function(a,b){return a.time-b.time;});
+    try{
+      localStorage.setItem(CACHE_KEY,JSON.stringify({savedAt:now,candles:candles}));
+    }catch(e){}
+    return candles;
+  }
+
+  function buildSamples(candles,currentStart){
+    var done=candles.filter(function(c){return c.time<currentStart;}).sort(function(a,b){return a.time-b.time;});
+    var samples=[];
+    for(var i=40;i<done.length;i++){
+      var current=done[i];
+      var prior=done.slice(Math.max(0,i-80),i);
+      var signal=computeSignal(prior);
+      if(!signal) continue;
+      if(current.close===current.open) continue;
+      samples.push({
+        time:current.time,
+        score:signal.score,
+        y:current.close>current.open ? 1 : 0,
+        open:current.open,
+        close:current.close
+      });
+    }
+    if(samples.length>MAX_WINDOWS) samples=samples.slice(-MAX_WINDOWS);
+    return {samples:samples,done:done};
+  }
+
+  function calibrate(candles){
+    var currentStart=intervalStartMs(Date.now());
+    var built=buildSamples(candles,currentStart);
+    var samples=built.samples;
+    completedCandles=built.done;
+
+    if(samples.length<MIN_WINDOWS){
+      throw new Error("Only "+samples.length+" usable historical windows were available. At least "+MIN_WINDOWS+" are required.");
+    }
+
+    var split=Math.floor(samples.length*0.70);
+    split=clamp(split,1,samples.length-1);
+    var train=samples.slice(0,split);
+    var test=samples.slice(split);
+    var fitted=fitLogistic(train);
+    var metrics=evaluate(test,fitted);
+
+    model={
+      a:fitted.a,
+      b:fitted.b,
+      samples:samples.length,
+      train:train.length,
+      test:test.length,
+      accuracy:metrics.accuracy,
+      brier:metrics.brier,
+      trainStart:train[0].time,
+      trainEnd:train[train.length-1].time,
+      testStart:test[0].time,
+      testEnd:test[test.length-1].time
+    };
+    return model;
+  }
+
+  async function fetchCurrentAndRecent(){
+    var now=Date.now();
+    var start=intervalStartMs(now);
+    var from=start-6*60*60*1000;
+    var path="/products/"+PRODUCT+"/candles?granularity=900&start="+encodeURIComponent(iso(from))+"&end="+encodeURIComponent(iso(now));
+    var rows=await apiJSON(path);
+    var candles=rows.map(parseCandleRow).sort(function(a,b){return a.time-b.time;});
+    return {start:start,candles:candles};
+  }
+
+  async function fetchTicker(){
+    var t=await apiJSON("/products/"+PRODUCT+"/ticker");
+    return Number(t.price);
+  }
+
+  function loadPredictionHistory(){
+    try{
+      var h=JSON.parse(localStorage.getItem(PRED_KEY)||"[]");
+      return Array.isArray(h)?h:[];
+    }catch(e){ return []; }
+  }
+
+  function savePredictionHistory(h){
+    try{ localStorage.setItem(PRED_KEY,JSON.stringify(h.slice(-30))); }catch(e){}
+  }
+
+  function settlePreviousIfPossible(startPrice,newStartPrice,newStart){
+    var h=loadPredictionHistory();
+    if(!h.length) return;
+    var last=h[h.length-1];
+    if(last.end===newStart && !last.result && Number.isFinite(newStartPrice)){
+      last.closePrice=newStartPrice;
+      var actual=newStartPrice>last.lockedPrice ? "Higher" : newStartPrice<last.lockedPrice ? "Lower" : "Flat";
+      last.actual=actual;
+      last.result=actual==="Flat" ? "PUSH" : actual===last.direction ? "WIN" : "LOSS";
+      savePredictionHistory(h);
     }
   }
 
-  $("refreshBtn").addEventListener("click", refresh);
-  setInterval(updateCountdown, 1000);
-  setInterval(refresh, 30000);
-  document.addEventListener("visibilitychange", () => {
-    if (document.visibilityState === "visible") refresh();
+  function renderHistory(){
+    var h=loadPredictionHistory().slice(-8).reverse();
+    if(!h.length){
+      el("history").textContent="No completed local predictions yet.";
+      return;
+    }
+    el("history").innerHTML=h.map(function(x){
+      var result=x.result||"OPEN";
+      var cls=result==="WIN"?"ok":result==="LOSS"?"":"warn";
+      return '<div class="history-item">'+
+        '<span>'+dateShort(x.start)+' '+timeOnly(x.start)+'–'+timeOnly(x.end)+'</span>'+
+        '<span>'+x.direction+' '+(x.confidence*100).toFixed(1)+'%</span>'+
+        '<span class="'+cls+'">'+result+'</span>'+
+      '</div>';
+    }).join("");
+  }
+
+  function renderModel(){
+    el("totalWindows").textContent=model.samples.toLocaleString();
+    el("trainWindows").textContent=model.train.toLocaleString();
+    el("testWindows").textContent=model.test.toLocaleString();
+    el("oosAccuracy").textContent=fmtPct(model.accuracy,1);
+    el("brier").textContent=model.brier.toFixed(3);
+    el("rangeText").textContent=
+      "Calibration: "+dateShort(model.trainStart)+" → "+dateShort(model.trainEnd)+
+      ". Out-of-sample verification: "+dateShort(model.testStart)+" → "+dateShort(model.testEnd)+
+      ". The split is chronological and the verification segment is never used to fit the probability curve.";
+    setProgress(100,"Calibration complete. Probability model is frozen from the 70% in-sample segment.");
+  }
+
+  async function makeLockedPrediction(){
+    if(!model) return;
+    var live=await fetchCurrentAndRecent();
+    var start=live.start;
+    var currentCandle=live.candles.find(function(c){return c.time===start;});
+
+    if(!currentCandle){
+      await sleep(1500);
+      live=await fetchCurrentAndRecent();
+      currentCandle=live.candles.find(function(c){return c.time===start;});
+    }
+    if(!currentCandle) throw new Error("The current quarter-hour candle is not available yet. Try again in a few seconds.");
+
+    var prior=completedCandles.filter(function(c){return c.time<start;});
+    var recentPrior=live.candles.filter(function(c){return c.time<start;});
+    var merged=new Map();
+    prior.slice(-100).forEach(function(c){merged.set(c.time,c);});
+    recentPrior.forEach(function(c){merged.set(c.time,c);});
+    var history=Array.from(merged.values()).sort(function(a,b){return a.time-b.time;});
+
+    var s=computeSignal(history);
+    if(!s) throw new Error("Not enough completed candles for the live signal.");
+
+    var pHigher=probabilityHigher(s.score,model);
+    var direction=pHigher>=0.5 ? "Higher" : "Lower";
+    var confidence=direction==="Higher" ? pHigher : 1-pHigher;
+
+    settlePreviousIfPossible(null,currentCandle.open,start);
+
+    var stored=loadPredictionHistory();
+    var existing=stored.find(function(x){return x.start===start;});
+    if(existing){
+      currentPrediction=existing;
+    }else{
+      currentPrediction={
+        start:start,
+        end:start+BAR_MS,
+        lockedPrice:currentCandle.open,
+        direction:direction,
+        confidence:confidence,
+        pHigher:pHigher,
+        score:s.score,
+        createdAt:Date.now()
+      };
+      stored.push(currentPrediction);
+      savePredictionHistory(stored);
+    }
+
+    renderPrediction();
+    renderHistory();
+  }
+
+  function renderPrediction(){
+    if(!currentPrediction) return;
+    var p=el("prediction");
+    p.textContent=currentPrediction.direction+" "+(currentPrediction.confidence*100).toFixed(1)+"%";
+    p.className="prediction "+(currentPrediction.direction==="Higher"?"higher":"lower");
+    el("lockedPrice").textContent=fmtMoney(currentPrediction.lockedPrice);
+    el("windowTime").textContent=timeOnly(currentPrediction.start)+" → "+timeOnly(currentPrediction.end);
+    el("signalScore").textContent=(currentPrediction.score>0?"+":"")+currentPrediction.score.toFixed(1);
+    el("heroStatus").textContent=
+      "Locked at "+timeOnly(currentPrediction.start)+
+      ". Probability was calibrated from the 70% historical training segment and will not change during this window.";
+  }
+
+  function updateCountdown(){
+    var now=Date.now();
+    var start=intervalStartMs(now);
+    var end=start+BAR_MS;
+    if(currentPrediction) end=currentPrediction.end;
+    var ms=Math.max(0,end-now);
+    var m=Math.floor(ms/60000), s=Math.floor((ms%60000)/1000);
+    el("countdown").textContent=m+":"+String(s).padStart(2,"0");
+  }
+
+  async function updateTicker(){
+    try{
+      var p=await fetchTicker();
+      el("livePrice").textContent=fmtMoney(p);
+    }catch(e){}
+  }
+
+  async function boundaryCheck(){
+    if(!model || busy) return;
+    var start=intervalStartMs(Date.now());
+    if(!currentPrediction || currentPrediction.start!==start){
+      try{
+        busy=true;
+        await makeLockedPrediction();
+      }catch(e){
+        setError(e.message);
+      }finally{
+        busy=false;
+      }
+    }
+  }
+
+  async function runAll(force){
+    if(busy) return;
+    busy=true;
+    el("rerunBtn").disabled=true;
+    setError("");
+    model=null;
+    currentPrediction=null;
+    el("prediction").textContent="CALIBRATING…";
+    el("prediction").className="prediction loading";
+    el("heroStatus").textContent="Loading historical data and fitting the probability model.";
+    setProgress(1,"Preparing historical data…");
+
+    try{
+      var candles=await fetchHistorical90d(!!force);
+      setProgress(52,"Building strictly past-only features for each 15-minute window…");
+      await sleep(30);
+      calibrate(candles);
+      setProgress(88,"Running the frozen model over the 30% out-of-sample segment…");
+      await sleep(30);
+      renderModel();
+      busy=false;
+      await makeLockedPrediction();
+      await updateTicker();
+    }catch(e){
+      setError(e.message);
+      el("prediction").textContent="DATA ERROR";
+      el("prediction").className="prediction loading";
+      el("heroStatus").textContent="The model could not finish calibration.";
+    }finally{
+      busy=false;
+      el("rerunBtn").disabled=false;
+    }
+  }
+
+  el("rerunBtn").addEventListener("click",function(){ runAll(true); });
+  document.addEventListener("visibilitychange",function(){
+    if(document.visibilityState==="visible"){
+      boundaryCheck();
+      updateTicker();
+    }
   });
 
+  setInterval(updateCountdown,1000);
+  setInterval(boundaryCheck,5000);
+  setInterval(updateTicker,15000);
+
   updateCountdown();
-  refresh();
+  renderHistory();
+  runAll(false);
 })();
 </script>
 </body>
