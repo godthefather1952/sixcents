@@ -1,0 +1,368 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <meta name="theme-color" content="#111827" />
+  <title>BTC 15-Minute Signal</title>
+  <style>
+    :root {
+      color-scheme: dark;
+      --bg:#0b1020; --panel:#111827; --panel2:#182033; --text:#f3f4f6;
+      --muted:#9ca3af; --line:#273244; --up:#34d399; --down:#fb7185;
+      --neutral:#fbbf24; --accent:#60a5fa;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin:0; font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Arial,sans-serif;
+      background:var(--bg); color:var(--text); min-height:100vh;
+    }
+    main { max-width:760px; margin:0 auto; padding:16px 14px 28px; }
+    h1 { margin:0 0 4px; font-size:1.45rem; }
+    .sub { color:var(--muted); font-size:.92rem; margin-bottom:14px; }
+    .card {
+      background:var(--panel); border:1px solid var(--line); border-radius:16px;
+      padding:14px; margin:12px 0;
+    }
+    .signal-wrap { display:grid; gap:10px; grid-template-columns:1fr 1fr; }
+    .signal {
+      grid-column:1/-1; text-align:center; padding:18px 10px; border-radius:14px;
+      background:var(--panel2); border:1px solid var(--line);
+    }
+    .signal .big { font-size:2rem; font-weight:800; letter-spacing:.04em; }
+    .UP .big { color:var(--up); } .DOWN .big { color:var(--down); }
+    .NEUTRAL .big { color:var(--neutral); }
+    .metric { background:var(--panel2); border:1px solid var(--line); border-radius:12px; padding:11px; }
+    .label { color:var(--muted); font-size:.78rem; margin-bottom:4px; }
+    .value { font-size:1.04rem; font-weight:700; overflow-wrap:anywhere; }
+    .row { display:flex; gap:10px; align-items:center; justify-content:space-between; flex-wrap:wrap; }
+    button {
+      min-height:44px; border:0; border-radius:12px; padding:0 16px;
+      font-size:1rem; font-weight:700; background:var(--accent); color:#07111f;
+    }
+    button:disabled { opacity:.55; }
+    .status { color:var(--muted); font-size:.88rem; }
+    table { width:100%; border-collapse:collapse; font-size:.86rem; }
+    th,td { text-align:left; border-bottom:1px solid var(--line); padding:8px 5px; }
+    th { color:var(--muted); font-weight:600; }
+    .pos { color:var(--up); } .neg { color:var(--down); } .neu { color:var(--neutral); }
+    .small { color:var(--muted); font-size:.78rem; line-height:1.4; }
+    .error { color:#fecaca; background:#3f1720; border:1px solid #7f1d1d; padding:10px; border-radius:10px; display:none; }
+    @media (max-width:420px) {
+      .signal-wrap { grid-template-columns:1fr; }
+      .signal { grid-column:auto; }
+      main { padding-left:10px; padding-right:10px; }
+    }
+  </style>
+</head>
+<body>
+<main>
+  <h1>BTC 15-Minute Signal</h1>
+  <div class="sub">Uses the prior ~60 minutes of 1-minute BTC/USD candles. Official windows align to :00, :15, :30 and :45.</div>
+
+  <section class="card">
+    <div class="signal-wrap">
+      <div id="signalBox" class="signal NEUTRAL">
+        <div class="label">Current signal</div>
+        <div id="signal" class="big">LOADING</div>
+        <div id="confidence" class="status">—</div>
+      </div>
+      <div class="metric">
+        <div class="label">BTC/USD</div>
+        <div id="price" class="value">—</div>
+      </div>
+      <div class="metric">
+        <div class="label">Score</div>
+        <div id="score" class="value">—</div>
+      </div>
+      <div class="metric">
+        <div class="label">Next quarter boundary</div>
+        <div id="targetTime" class="value">—</div>
+      </div>
+      <div class="metric">
+        <div class="label">Time remaining</div>
+        <div id="countdown" class="value">—</div>
+      </div>
+    </div>
+  </section>
+
+  <section class="card">
+    <div class="row">
+      <div>
+        <div class="value">Indicator breakdown</div>
+        <div id="updated" class="status">Not updated yet</div>
+      </div>
+      <button id="refreshBtn" type="button">Refresh</button>
+    </div>
+    <div id="error" class="error" style="margin-top:10px"></div>
+    <div style="overflow-x:auto;margin-top:10px">
+      <table>
+        <thead><tr><th>Indicator</th><th>Value</th><th>Vote</th></tr></thead>
+        <tbody id="indicatorRows"></tbody>
+      </table>
+    </div>
+  </section>
+
+  <section class="card">
+    <div class="value">How version 1 decides</div>
+    <p class="small">
+      Weighted votes come from EMA 9/21 trend, MACD 12/26/9, RSI 14, 60-minute VWAP,
+      Bollinger position, 15-minute price momentum, and recent volume confirmation.
+      A score of +3 or more = UP, -3 or less = DOWN, otherwise NEUTRAL.
+      This is a heuristic signal, not a guaranteed forecast or trading instruction.
+    </p>
+    <p class="small">
+      The page refreshes market data every 30 seconds while it is open. Mobile browsers may suspend
+      JavaScript when the tab is backgrounded or the phone is locked, so do not rely on this page
+      alone for unattended alerts.
+    </p>
+  </section>
+</main>
+
+<script>
+(() => {
+  "use strict";
+
+  const API = "https://api.kraken.com/0/public/OHLC?pair=XBTUSD&interval=1";
+  const $ = id => document.getElementById(id);
+  let busy = false;
+
+  const fmtMoney = n => Number.isFinite(n)
+    ? n.toLocaleString(undefined, {style:"currency", currency:"USD", maximumFractionDigits:2})
+    : "—";
+
+  const fmtNum = (n, digits=2) => Number.isFinite(n) ? n.toFixed(digits) : "—";
+
+  function nextQuarterBoundary(now = new Date()) {
+    const t = now.getTime();
+    const q = 15 * 60 * 1000;
+    return new Date(Math.ceil((t + 250) / q) * q);
+  }
+
+  function updateCountdown() {
+    const target = nextQuarterBoundary();
+    $("targetTime").textContent = target.toLocaleTimeString([], {hour:"numeric", minute:"2-digit"});
+    const ms = Math.max(0, target.getTime() - Date.now());
+    const m = Math.floor(ms / 60000);
+    const s = Math.floor((ms % 60000) / 1000);
+    $("countdown").textContent = `${m}:${String(s).padStart(2,"0")}`;
+  }
+
+  function emaSeries(values, period) {
+    if (values.length < period) return [];
+    const k = 2 / (period + 1);
+    const out = [];
+    let prev = values.slice(0, period).reduce((a,b)=>a+b,0) / period;
+    for (let i = 0; i < values.length; i++) {
+      if (i < period - 1) out.push(NaN);
+      else if (i === period - 1) out.push(prev);
+      else {
+        prev = values[i] * k + prev * (1-k);
+        out.push(prev);
+      }
+    }
+    return out;
+  }
+
+  function rsi(values, period=14) {
+    if (values.length < period + 1) return NaN;
+    let gains = 0, losses = 0;
+    for (let i = 1; i <= period; i++) {
+      const d = values[i] - values[i-1];
+      gains += Math.max(d, 0);
+      losses += Math.max(-d, 0);
+    }
+    let avgGain = gains / period, avgLoss = losses / period;
+    for (let i = period + 1; i < values.length; i++) {
+      const d = values[i] - values[i-1];
+      avgGain = (avgGain * (period-1) + Math.max(d,0)) / period;
+      avgLoss = (avgLoss * (period-1) + Math.max(-d,0)) / period;
+    }
+    if (avgLoss === 0) return 100;
+    const rs = avgGain / avgLoss;
+    return 100 - (100 / (1 + rs));
+  }
+
+  function macd(values) {
+    const fast = emaSeries(values, 12);
+    const slow = emaSeries(values, 26);
+    const line = values.map((_,i) =>
+      Number.isFinite(fast[i]) && Number.isFinite(slow[i]) ? fast[i]-slow[i] : NaN
+    );
+    const valid = line.filter(Number.isFinite);
+    const signalValid = emaSeries(valid, 9);
+    const signal = signalValid.length ? signalValid[signalValid.length-1] : NaN;
+    const current = valid.length ? valid[valid.length-1] : NaN;
+    return { line: current, signal, hist: current - signal };
+  }
+
+  function bollinger(values, period=20, mult=2) {
+    if (values.length < period) return {mid:NaN, upper:NaN, lower:NaN, pctB:NaN};
+    const s = values.slice(-period);
+    const mid = s.reduce((a,b)=>a+b,0) / period;
+    const variance = s.reduce((a,b)=>a + Math.pow(b-mid,2),0) / period;
+    const sd = Math.sqrt(variance);
+    const upper = mid + mult*sd, lower = mid - mult*sd;
+    const price = values[values.length-1];
+    const pctB = upper === lower ? 0.5 : (price-lower)/(upper-lower);
+    return {mid, upper, lower, pctB};
+  }
+
+  function calcVWAP(candles) {
+    let pv = 0, vol = 0;
+    for (const c of candles) {
+      const typical = (c.high + c.low + c.close) / 3;
+      pv += typical * c.volume;
+      vol += c.volume;
+    }
+    return vol > 0 ? pv / vol : NaN;
+  }
+
+  function voteLabel(v) {
+    if (v > 0) return `<span class="pos">+${v}</span>`;
+    if (v < 0) return `<span class="neg">${v}</span>`;
+    return `<span class="neu">0</span>`;
+  }
+
+  function setError(msg="") {
+    const el = $("error");
+    el.textContent = msg;
+    el.style.display = msg ? "block" : "none";
+  }
+
+  function parseKraken(payload) {
+    if (!payload || !payload.result) throw new Error("Unexpected market-data response.");
+    if (Array.isArray(payload.error) && payload.error.length) throw new Error(payload.error.join(", "));
+    const key = Object.keys(payload.result).find(k => k !== "last");
+    if (!key) throw new Error("BTC/USD candles were not found.");
+    return payload.result[key].map(r => ({
+      time: Number(r[0]),
+      open: Number(r[1]),
+      high: Number(r[2]),
+      low: Number(r[3]),
+      close: Number(r[4]),
+      vwap: Number(r[5]),
+      volume: Number(r[6]),
+      count: Number(r[7])
+    })).filter(c => [c.open,c.high,c.low,c.close,c.volume].every(Number.isFinite));
+  }
+
+  function analyze(allCandles) {
+    if (allCandles.length < 60) throw new Error("Not enough candle history to calculate the indicators.");
+
+    const hist = allCandles.slice(-180);
+    const hour = allCandles.slice(-60);
+    const closes = hist.map(c => c.close);
+    const price = closes[closes.length-1];
+
+    const ema9s = emaSeries(closes,9), ema21s = emaSeries(closes,21);
+    const ema9 = ema9s[ema9s.length-1], ema21 = ema21s[ema21s.length-1];
+    const rsi14 = rsi(closes,14);
+    const m = macd(closes);
+    const bb = bollinger(closes,20,2);
+    const vwap60 = calcVWAP(hour);
+
+    const close15Ago = allCandles.length >= 16 ? allCandles[allCandles.length-16].close : NaN;
+    const mom15 = Number.isFinite(close15Ago) ? ((price/close15Ago)-1)*100 : NaN;
+
+    const recent5 = hour.slice(-5).reduce((s,c)=>s+c.volume,0) / Math.max(1, hour.slice(-5).length);
+    const prior15 = hour.slice(-20,-5).reduce((s,c)=>s+c.volume,0) / Math.max(1, hour.slice(-20,-5).length);
+    const volRatio = prior15 > 0 ? recent5/prior15 : 1;
+
+    let score = 0;
+    const rows = [];
+
+    let v = ema9 > ema21 ? 2 : ema9 < ema21 ? -2 : 0;
+    score += v;
+    rows.push(["EMA 9 vs 21", `${fmtMoney(ema9)} / ${fmtMoney(ema21)}`, v]);
+
+    v = m.hist > 0 ? 2 : m.hist < 0 ? -2 : 0;
+    score += v;
+    rows.push(["MACD histogram", fmtNum(m.hist,2), v]);
+
+    v = rsi14 >= 55 && rsi14 <= 72 ? 1 :
+        rsi14 <= 45 && rsi14 >= 28 ? -1 :
+        rsi14 > 78 ? -0.5 :
+        rsi14 < 22 ? 0.5 : 0;
+    score += v;
+    rows.push(["RSI 14", fmtNum(rsi14,1), v]);
+
+    v = price > vwap60 ? 1 : price < vwap60 ? -1 : 0;
+    score += v;
+    rows.push(["60m VWAP", fmtMoney(vwap60), v]);
+
+    v = bb.pctB > 0.55 && bb.pctB < 1.05 ? 1 :
+        bb.pctB < 0.45 && bb.pctB > -0.05 ? -1 :
+        bb.pctB >= 1.05 ? -0.5 :
+        bb.pctB <= -0.05 ? 0.5 : 0;
+    score += v;
+    rows.push(["Bollinger %B", fmtNum(bb.pctB,2), v]);
+
+    v = mom15 > 0.05 ? 1 : mom15 < -0.05 ? -1 : 0;
+    score += v;
+    rows.push(["15m momentum", `${fmtNum(mom15,3)}%`, v]);
+
+    v = volRatio >= 1.20 ? (mom15 > 0 ? 1 : mom15 < 0 ? -1 : 0) : 0;
+    score += v;
+    rows.push(["Volume confirmation", `${fmtNum(volRatio,2)}×`, v]);
+
+    const signal = score >= 3 ? "UP" : score <= -3 ? "DOWN" : "NEUTRAL";
+    const maxAbs = 9;
+    const directionalStrength = Math.min(1, Math.abs(score)/maxAbs);
+    const confidence = signal === "NEUTRAL"
+      ? Math.round(50 - Math.min(15, Math.abs(score)*4))
+      : Math.round(52 + directionalStrength*36);
+
+    return {price, score, signal, confidence, rows};
+  }
+
+  function render(a) {
+    $("signal").textContent = a.signal;
+    $("signalBox").className = `signal ${a.signal}`;
+    $("confidence").textContent = a.signal === "NEUTRAL"
+      ? "No strong directional edge"
+      : `Signal strength: ${a.confidence}%`;
+    $("price").textContent = fmtMoney(a.price);
+    $("score").textContent = `${a.score > 0 ? "+" : ""}${fmtNum(a.score,1)}`;
+
+    $("indicatorRows").innerHTML = a.rows.map(([name,value,v]) =>
+      `<tr><td>${name}</td><td>${value}</td><td>${voteLabel(v)}</td></tr>`
+    ).join("");
+
+    $("updated").textContent = `Updated ${new Date().toLocaleTimeString([], {hour:"numeric",minute:"2-digit",second:"2-digit"})}`;
+  }
+
+  async function refresh() {
+    if (busy) return;
+    busy = true;
+    $("refreshBtn").disabled = true;
+    setError("");
+    try {
+      const res = await fetch(API, {cache:"no-store"});
+      if (!res.ok) throw new Error(`Market-data request failed (${res.status}).`);
+      const payload = await res.json();
+      const candles = parseKraken(payload);
+      render(analyze(candles));
+    } catch (err) {
+      setError(`${err.message} Reload the page and check your internet connection.`);
+      $("signal").textContent = "ERROR";
+      $("signalBox").className = "signal NEUTRAL";
+    } finally {
+      busy = false;
+      $("refreshBtn").disabled = false;
+    }
+  }
+
+  $("refreshBtn").addEventListener("click", refresh);
+  setInterval(updateCountdown, 1000);
+  setInterval(refresh, 30000);
+  document.addEventListener("visibilitychange", () => {
+    if (document.visibilityState === "visible") refresh();
+  });
+
+  updateCountdown();
+  refresh();
+})();
+</script>
+</body>
+</html>
