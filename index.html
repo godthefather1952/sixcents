@@ -127,6 +127,38 @@
   </section>
 
   <section class="card">
+    <div class="value">Walk-forward test</div>
+    <p class="small">A stricter check than the single split. Starting at the 70% mark, the model is refit on everything before each block, then predicts only the next block it has never seen. The window rolls forward until the data ends, and all blocks are scored together.</p>
+    <div class="grid">
+      <div class="metric">
+        <div class="label">Refits / windows scored</div>
+        <div id="wfFolds" class="value">—</div>
+      </div>
+      <div class="metric">
+        <div class="label">Model accuracy</div>
+        <div id="wfAccuracy" class="value">—</div>
+      </div>
+      <div class="metric">
+        <div class="label">Baseline accuracy</div>
+        <div id="wfBase" class="value">—</div>
+      </div>
+      <div class="metric">
+        <div class="label">Log-loss skill vs baseline</div>
+        <div id="wfSkill" class="value">—</div>
+      </div>
+      <div class="metric">
+        <div class="label">Brier: model / baseline</div>
+        <div id="wfBrier" class="value">—</div>
+      </div>
+      <div class="metric">
+        <div class="label">Folds beating baseline</div>
+        <div id="wfWins" class="value">—</div>
+      </div>
+    </div>
+    <p class="small" id="wfVerdict"></p>
+  </section>
+
+  <section class="card">
     <div class="value">Learned feature weights</div>
     <p class="small">Each feature is standardized on the training set, then logistic regression learns its weight. A positive weight means higher values push toward "Higher"; a negative weight means the feature has tended to mean-revert.</p>
     <div id="weights" class="small">Weights appear after calibration.</div>
@@ -159,6 +191,7 @@
   var CONCURRENCY = 3;
   var RIDGE = 2.0;
   var MOVE_BINS = 10;
+  var WF_FOLDS = 30;
 
   var FEATURE_NAMES = [
     "EMA 9/21 gap",
@@ -574,6 +607,54 @@
     return {samples:samples,done:done};
   }
 
+  function fitModel(train){
+    var scaler=fitScaler(train);
+    var Z=train.map(function(s){ return scale(s.x,scaler); });
+    var Y=train.map(function(s){ return s.y; });
+    var w=fitLogistic(Z,Y);
+    var baseRate=clamp(Y.reduce(function(a,b){return a+b;},0)/Y.length,0.001,0.999);
+    return {scaler:scaler,w:w,baseRate:baseRate};
+  }
+
+  // Expanding-window walk-forward: for each block after `start`, refit on
+  // all earlier samples only, then score that block. Blocks are contiguous.
+  function walkForward(samples,start){
+    var n=samples.length, remaining=n-start;
+    var block=Math.max(1,Math.ceil(remaining/WF_FOLDS));
+    var scored=0, correct=0, baseCorrect=0, brier=0, brier0=0, ll=0, ll0=0;
+    var folds=0, foldWins=0;
+    for(var t=start;t<n;t+=block){
+      var end=Math.min(n,t+block);
+      var m=fitModel(samples.slice(0,t));
+      var fl=0, fl0=0;
+      var baseCall=m.baseRate>=0.5 ? 1 : 0;
+      for(var i=t;i<end;i++){
+        var y=samples[i].y, p=probabilityHigher(samples[i].x,m);
+        if((p>=0.5?1:0)===y) correct++;
+        if(baseCall===y) baseCorrect++;
+        brier+=Math.pow(p-y,2);
+        brier0+=Math.pow(m.baseRate-y,2);
+        var a=logLoss(p,y), b=logLoss(m.baseRate,y);
+        ll+=a; ll0+=b; fl+=a; fl0+=b;
+      }
+      scored+=end-t;
+      folds++;
+      if(fl<fl0) foldWins++;
+    }
+    var acc=correct/scored;
+    return {
+      folds:folds,
+      scored:scored,
+      accuracy:acc,
+      accuracyCI:1.96*Math.sqrt(acc*(1-acc)/scored),
+      baseAccuracy:baseCorrect/scored,
+      brier:brier/scored,
+      baseBrier:brier0/scored,
+      skill:1-(ll/ll0),
+      foldWins:foldWins
+    };
+  }
+
   function calibrate(candles){
     var built=buildSamples(candles,intervalStartMs(Date.now()));
     var samples=built.samples;
@@ -587,13 +668,10 @@
     var train=samples.slice(0,split);
     var test=samples.slice(split);
 
-    var scaler=fitScaler(train);
-    var Z=train.map(function(s){ return scale(s.x,scaler); });
-    var Y=train.map(function(s){ return s.y; });
-    var w=fitLogistic(Z,Y);
-    var baseRate=clamp(Y.reduce(function(a,b){return a+b;},0)/Y.length,0.001,0.999);
+    var fit=fitModel(train);
+    var baseRate=fit.baseRate;
 
-    model={scaler:scaler,w:w,baseRate:baseRate};
+    model=fit;
     model.moveBins=fitMoveModel(train,model);
     var metrics=evaluate(test,model,baseRate);
 
@@ -601,6 +679,7 @@
     model.train=train.length;
     model.test=test.length;
     model.metrics=metrics;
+    model.wf=walkForward(samples,split);
     model.trainStart=train[0].time;
     model.trainEnd=train[train.length-1].time;
     model.testStart=test[0].time;
@@ -693,6 +772,24 @@
       "Train: "+dateShort(model.trainStart)+" → "+dateShort(model.trainEnd)+
       ". Test: "+dateShort(model.testStart)+" → "+dateShort(model.testEnd)+
       ". Baseline always predicts the training base rate ("+fmtPct(model.baseRate,1)+" Higher). Log-loss skill above 0% means the model's probabilities beat it.";
+
+    var wf=model.wf;
+    el("wfFolds").textContent=wf.folds+" / "+wf.scored.toLocaleString();
+    el("wfAccuracy").textContent=fmtPct(wf.accuracy,1)+" ±"+(wf.accuracyCI*100).toFixed(1);
+    el("wfBase").textContent=fmtPct(wf.baseAccuracy,1);
+    el("wfSkill").textContent=(wf.skill>=0?"+":"")+(wf.skill*100).toFixed(2)+"%";
+    el("wfSkill").className="value "+(wf.skill>0?"ok":"warn");
+    el("wfBrier").textContent=wf.brier.toFixed(4)+" / "+wf.baseBrier.toFixed(4);
+    el("wfWins").textContent=wf.foldWins+" of "+wf.folds;
+    var wfEdge=wf.accuracy-wf.baseAccuracy, wfText;
+    if(wf.skill>0 && wfEdge>wf.accuracyCI){
+      wfText="Across every walk-forward block the model beats the baseline by more than the ±"+(wf.accuracyCI*100).toFixed(1)+"-point noise band, and its probabilities were better in "+wf.foldWins+" of "+wf.folds+" blocks. That is the strongest evidence of an edge this page can give.";
+    }else if(wf.skill>0){
+      wfText="Walk-forward probabilities are slightly better than the baseline, but the accuracy gap is inside the ±"+(wf.accuracyCI*100).toFixed(1)+"-point noise band and only "+wf.foldWins+" of "+wf.folds+" blocks beat it. Treat any edge as unproven.";
+    }else{
+      wfText="Walk-forward, the model does not beat the baseline ("+wf.foldWins+" of "+wf.folds+" blocks did). Treat its calls as close to a coin flip.";
+    }
+    el("wfVerdict").textContent=wfText;
 
     var rows=FEATURE_NAMES.map(function(name,i){ return {name:name,w:model.w[i+1]}; })
       .sort(function(a,b){ return Math.abs(b.w)-Math.abs(a.w); });
