@@ -92,7 +92,7 @@
         <div class="value">Automated historical calibration</div>
         <div id="backtestStatus" class="status">Preparing 90 days of 15-minute BTC/USD candles…</div>
       </div>
-      <button id="rerunBtn" type="button">Re-run</button>
+      <button id="rerunBtn" type="button">Refit model</button>
     </div>
     <div class="progress" aria-label="Backtest progress"><div id="progressBar"></div></div>
     <div id="error" class="error"></div>
@@ -102,41 +102,39 @@
         <div id="totalWindows" class="value">—</div>
       </div>
       <div class="metric">
-        <div class="label">70% calibration</div>
-        <div id="trainWindows" class="value">—</div>
+        <div class="label">70% train / 30% test</div>
+        <div id="splitWindows" class="value">—</div>
       </div>
       <div class="metric">
-        <div class="label">30% out-of-sample</div>
-        <div id="testWindows" class="value">—</div>
-      </div>
-      <div class="metric">
-        <div class="label">OOS directional accuracy</div>
+        <div class="label">Model accuracy (test)</div>
         <div id="oosAccuracy" class="value">—</div>
       </div>
       <div class="metric">
-        <div class="label">OOS Brier score</div>
-        <div id="brier" class="value">—</div>
+        <div class="label">Baseline accuracy (test)</div>
+        <div id="baseAccuracy" class="value">—</div>
       </div>
       <div class="metric">
-        <div class="label">Model score</div>
-        <div id="signalScore" class="value">—</div>
+        <div class="label">Log-loss skill vs baseline</div>
+        <div id="skill" class="value">—</div>
+      </div>
+      <div class="metric">
+        <div class="label">Brier: model / baseline</div>
+        <div id="brier" class="value">—</div>
       </div>
     </div>
+    <p class="small" id="verdict"></p>
     <p class="small" id="rangeText">The split is chronological, not randomized. The model is fitted only on the first 70% and then frozen before the last 30% is evaluated.</p>
   </section>
 
   <section class="card">
+    <div class="value">Learned feature weights</div>
+    <p class="small">Each feature is standardized on the training set, then logistic regression learns its weight. A positive weight means higher values push toward "Higher"; a negative weight means the feature has tended to mean-revert.</p>
+    <div id="weights" class="small">Weights appear after calibration.</div>
+  </section>
+
+  <section class="card">
     <div class="value">No-look-ahead design</div>
-    <p class="small">For historical window <strong>i</strong>, the locked price is that 15-minute candle's open and every indicator is calculated only from candles that ended before window <strong>i</strong> began. The candle's close is used only afterward as the Higher/Lower outcome. The 70/30 split occurs on a clean quarter-hour boundary, and the 30% verification segment never participates in calibration.</p>
-    <div>
-      <span class="pill">EMA 9 / 21</span>
-      <span class="pill">MACD 12 / 26 / 9</span>
-      <span class="pill">RSI 14</span>
-      <span class="pill">1-hour rolling VWAP</span>
-      <span class="pill">Bollinger %B</span>
-      <span class="pill">15m momentum</span>
-      <span class="pill">Volume confirmation</span>
-    </div>
+    <p class="small">For historical window <strong>i</strong>, the locked price is that 15-minute candle's open and every feature is calculated only from candles that ended before window <strong>i</strong> began. The candle's close is used only afterward as the Higher/Lower outcome. Feature scaling, weights and the price-move table all come from the training 70%; the test 30% never participates in fitting.</p>
   </section>
 
   <section class="card">
@@ -144,7 +142,6 @@
     <div id="history" class="small" style="margin-top:8px">No completed local predictions yet.</div>
   </section>
 </main>
-
 <script>
 (function(){
   "use strict";
@@ -155,9 +152,24 @@
   var HISTORY_DAYS = 90;
   var MIN_WINDOWS = 3000;
   var MAX_WINDOWS = 10000;
-  var CACHE_KEY = "sixcents_history_v3";
-  var CACHE_TTL = 6 * 60 * 60 * 1000;
+  var CACHE_KEY = "sixcents_candles_v4";
+  var OLD_CACHE_KEYS = ["sixcents_history_v3"];
   var PRED_KEY = "sixcents_predictions_v3";
+  var CHUNK_BARS = 300;
+  var CONCURRENCY = 3;
+  var RIDGE = 2.0;
+  var MOVE_BINS = 10;
+
+  var FEATURE_NAMES = [
+    "EMA 9/21 gap",
+    "MACD histogram",
+    "RSI 14",
+    "1-hour VWAP distance",
+    "Bollinger %B",
+    "Last 15m return",
+    "Last 1h return",
+    "Volume spike × direction"
+  ];
 
   var model = null;
   var completedCandles = [];
@@ -190,6 +202,8 @@
     el("progressBar").style.width = clamp(p,0,100).toFixed(0) + "%";
     if(label) el("backtestStatus").textContent = label;
   }
+
+  /* ---------- Indicators ---------- */
 
   function emaSeries(values, period){
     if(values.length < period) return [];
@@ -264,7 +278,9 @@
     return vol>0 ? pv/vol : NaN;
   }
 
-  function computeSignal(history){
+  // Raw, continuous features. Signs are NOT assumed: the model learns
+  // whether each one behaves like momentum (+) or mean reversion (−).
+  function computeFeatures(history){
     if(history.length < 40) return null;
     var h=history.slice(-80);
     var closes=h.map(function(c){ return c.close; });
@@ -273,81 +289,38 @@
     var m=macd(closes);
     var r=rsi(closes,14);
     var bb=bollinger(closes,20);
-    var last=h[h.length-1], prev=h[h.length-2];
+    var last=h[h.length-1], prev=h[h.length-2], hourAgo=h[h.length-5];
+    var price=last.close;
     var vwap=rollingVWAP(h.slice(-4));
-    var mom=((last.close/prev.close)-1)*100;
 
-    var priorVol=h.slice(-5,-1);
-    var avgVol=0;
+    var priorVol=h.slice(-5,-1), avgVol=0;
     for(var i=0;i<priorVol.length;i++) avgVol+=priorVol[i].volume;
     avgVol=priorVol.length ? avgVol/priorVol.length : 0;
-    var volRatio=avgVol>0 ? last.volume/avgVol : 1;
+    var volRatio=avgVol>0 && last.volume>0 ? last.volume/avgVol : 1;
 
-    var score=0;
-    score += ema9>ema21 ? 2 : ema9<ema21 ? -2 : 0;
-    score += m.hist>0 ? 2 : m.hist<0 ? -2 : 0;
-    score += r>=55 ? 1 : r<=45 ? -1 : 0;
-    score += last.close>vwap ? 1 : last.close<vwap ? -1 : 0;
-    score += bb.pctB>0.55 ? 1 : bb.pctB<0.45 ? -1 : 0;
-    score += mom>0.05 ? 1 : mom<-0.05 ? -1 : 0;
-    if(volRatio>=1.20) score += mom>0 ? 1 : mom<0 ? -1 : 0;
+    var ret15=Math.log(last.close/prev.close)*100;
+    var ret60=Math.log(last.close/hourAgo.close)*100;
 
-    return {
-      score:score,
-      ema9:ema9,
-      ema21:ema21,
-      macdHist:m.hist,
-      rsi:r,
-      vwap:vwap,
-      pctB:bb.pctB,
-      momentum:mom,
-      volumeRatio:volRatio
-    };
+    var x=[
+      (ema9-ema21)/price*100,
+      m.hist/price*100,
+      (r-50)/50,
+      (price-vwap)/vwap*100,
+      bb.pctB-0.5,
+      ret15,
+      ret60,
+      Math.log(volRatio)*Math.sign(ret15)
+    ];
+    for(var j=0;j<x.length;j++) if(!Number.isFinite(x[j])) return null;
+    return x;
   }
+
+  /* ---------- Model ---------- */
 
   function sigmoid(z){
-    if(z>=0){
-      var ez=Math.exp(-z);
-      return 1/(1+ez);
-    }
+    if(z>=0){ return 1/(1+Math.exp(-z)); }
     var e=Math.exp(z);
     return e/(1+e);
-  }
-
-  function fitLogistic(samples){
-    var positives=0;
-    for(var i=0;i<samples.length;i++) positives += samples[i].y;
-    var mean=clamp(positives/samples.length,0.001,0.999);
-    var a=Math.log(mean/(1-mean));
-    var b=0;
-    var ridge=0.01;
-
-    for(var iter=0;iter<60;iter++){
-      var g0=0,g1=0,h00=0,h01=0,h11=ridge;
-      for(i=0;i<samples.length;i++){
-        var x=samples[i].score, y=samples[i].y;
-        var p=sigmoid(a+b*x);
-        var w=Math.max(1e-8,p*(1-p));
-        g0 += p-y;
-        g1 += (p-y)*x;
-        h00 += w;
-        h01 += w*x;
-        h11 += w*x*x;
-      }
-      g1 += ridge*b;
-      var det=h00*h11-h01*h01;
-      if(!Number.isFinite(det) || Math.abs(det)<1e-12) break;
-      var da=(h11*g0-h01*g1)/det;
-      var db=(-h01*g0+h00*g1)/det;
-      a -= da;
-      b -= db;
-      if(Math.abs(da)+Math.abs(db)<1e-8) break;
-    }
-    return {a:a,b:b};
-  }
-
-  function probabilityHigher(score,m){
-    return clamp(sigmoid(m.a+m.b*score),0.001,0.999);
   }
 
   function median(values){
@@ -357,39 +330,141 @@
     return s.length%2 ? s[mid] : (s[mid-1]+s[mid])/2;
   }
 
-  function fitMoveModel(train){
-    var byScore={};
-    for(var target=-9;target<=9;target++){
-      var nearby=train.filter(function(x){return Math.abs(x.score-target)<=1;});
-      if(nearby.length<30){
-        nearby=train.filter(function(x){return Math.abs(x.score-target)<=2;});
+  // Gaussian elimination with partial pivoting. Returns null if singular.
+  function solve(A,b){
+    var n=b.length, M=A.map(function(row,i){ return row.concat([b[i]]); });
+    for(var c=0;c<n;c++){
+      var piv=c;
+      for(var r=c+1;r<n;r++) if(Math.abs(M[r][c])>Math.abs(M[piv][c])) piv=r;
+      if(Math.abs(M[piv][c])<1e-12) return null;
+      var tmp=M[c]; M[c]=M[piv]; M[piv]=tmp;
+      for(r=c+1;r<n;r++){
+        var f=M[r][c]/M[c][c];
+        for(var k=c;k<=n;k++) M[r][k]-=f*M[c][k];
       }
-      if(nearby.length<20) nearby=train;
-      var mags=nearby.map(function(x){return Math.abs(x.logReturn);}).filter(Number.isFinite);
-      byScore[target]=clamp(median(mags),0.00001,0.03);
     }
-    return byScore;
+    var x=new Array(n);
+    for(var i=n-1;i>=0;i--){
+      var s=M[i][n];
+      for(var j=i+1;j<n;j++) s-=M[i][j]*x[j];
+      x[i]=s/M[i][i];
+    }
+    return x;
   }
 
-  function moveMagnitude(score,m){
-    var key=String(Math.round(clamp(score,-9,9)));
-    var v=m.moveByScore && Number(m.moveByScore[key]);
-    return Number.isFinite(v) ? v : 0.001;
+  function fitScaler(samples){
+    var d=samples[0].x.length, mu=new Array(d).fill(0), sd=new Array(d).fill(0), n=samples.length, i, j;
+    for(i=0;i<n;i++) for(j=0;j<d;j++) mu[j]+=samples[i].x[j];
+    for(j=0;j<d;j++) mu[j]/=n;
+    for(i=0;i<n;i++) for(j=0;j<d;j++) sd[j]+=Math.pow(samples[i].x[j]-mu[j],2);
+    for(j=0;j<d;j++) sd[j]=Math.max(Math.sqrt(sd[j]/n),1e-9);
+    return {mu:mu,sd:sd};
   }
 
-  function evaluate(samples,m){
-    var correct=0,brier=0;
-    for(var i=0;i<samples.length;i++){
-      var p=probabilityHigher(samples[i].score,m);
-      var pred=p>=0.5 ? 1 : 0;
-      if(pred===samples[i].y) correct++;
-      brier += Math.pow(p-samples[i].y,2);
+  // z-score then clip to ±4 so a single wild candle can't dominate.
+  function scale(x,sc){
+    var z=[1];
+    for(var j=0;j<x.length;j++) z.push(clamp((x[j]-sc.mu[j])/sc.sd[j],-4,4));
+    return z;
+  }
+
+  // Multivariate logistic regression, Newton–Raphson with an L2 penalty
+  // on every weight except the intercept.
+  function fitLogistic(Z,y){
+    var n=Z.length, d=Z[0].length, i, j, k;
+    var base=0;
+    for(i=0;i<n;i++) base+=y[i];
+    base=clamp(base/n,0.001,0.999);
+    var w=new Array(d).fill(0);
+    w[0]=Math.log(base/(1-base));
+
+    for(var iter=0;iter<50;iter++){
+      var g=new Array(d).fill(0);
+      var H=[];
+      for(j=0;j<d;j++) H.push(new Array(d).fill(0));
+      for(i=0;i<n;i++){
+        var z=Z[i], t=0;
+        for(j=0;j<d;j++) t+=w[j]*z[j];
+        var p=sigmoid(t), r=p-y[i], v=Math.max(1e-8,p*(1-p));
+        for(j=0;j<d;j++){
+          g[j]+=r*z[j];
+          for(k=j;k<d;k++) H[j][k]+=v*z[j]*z[k];
+        }
+      }
+      for(j=0;j<d;j++) for(k=0;k<j;k++) H[j][k]=H[k][j];
+      for(j=1;j<d;j++){ g[j]+=RIDGE*w[j]; H[j][j]+=RIDGE; }
+      var step=solve(H,g);
+      if(!step) break;
+      var change=0;
+      for(j=0;j<d;j++){ w[j]-=step[j]; change+=Math.abs(step[j]); }
+      if(change<1e-8) break;
     }
+    return w;
+  }
+
+  function linear(z,w){
+    var t=0;
+    for(var j=0;j<w.length;j++) t+=w[j]*z[j];
+    return t;
+  }
+
+  function probabilityHigher(x,m){
+    return clamp(sigmoid(linear(scale(x,m.scaler),m.w)),0.001,0.999);
+  }
+
+  // Typical move size by predicted-probability decile (training data only).
+  function fitMoveModel(train,m){
+    var rows=train.map(function(s){
+      return {p:probabilityHigher(s.x,m), mag:Math.abs(s.logReturn)};
+    }).sort(function(a,b){return a.p-b.p;});
+    var bins=[], size=Math.ceil(rows.length/MOVE_BINS);
+    for(var b=0;b<MOVE_BINS;b++){
+      var chunk=rows.slice(b*size,(b+1)*size);
+      if(!chunk.length) continue;
+      bins.push({
+        upper:chunk[chunk.length-1].p,
+        move:clamp(median(chunk.map(function(r){return r.mag;})),0.00001,0.03)
+      });
+    }
+    return bins;
+  }
+
+  function moveMagnitude(p,m){
+    for(var i=0;i<m.moveBins.length;i++){
+      if(p<=m.moveBins[i].upper) return m.moveBins[i].move;
+    }
+    return m.moveBins.length ? m.moveBins[m.moveBins.length-1].move : 0.001;
+  }
+
+  function logLoss(p,y){
+    p=clamp(p,1e-6,1-1e-6);
+    return -(y*Math.log(p)+(1-y)*Math.log(1-p));
+  }
+
+  function evaluate(test,m,baseRate){
+    var n=test.length, correct=0, baseCorrect=0, brier=0, brier0=0, ll=0, ll0=0;
+    var baseCall=baseRate>=0.5 ? 1 : 0;
+    for(var i=0;i<n;i++){
+      var y=test[i].y, p=probabilityHigher(test[i].x,m);
+      if((p>=0.5?1:0)===y) correct++;
+      if(baseCall===y) baseCorrect++;
+      brier+=Math.pow(p-y,2);
+      brier0+=Math.pow(baseRate-y,2);
+      ll+=logLoss(p,y);
+      ll0+=logLoss(baseRate,y);
+    }
+    var acc=correct/n;
     return {
-      accuracy:samples.length ? correct/samples.length : NaN,
-      brier:samples.length ? brier/samples.length : NaN
+      accuracy:acc,
+      accuracyCI:1.96*Math.sqrt(acc*(1-acc)/n),
+      baseAccuracy:baseCorrect/n,
+      brier:brier/n,
+      baseBrier:brier0/n,
+      skill:1-(ll/ll0)
     };
   }
+
+  /* ---------- Data ---------- */
 
   async function apiJSON(path){
     var res=await fetch(API+path,{cache:"no-store",headers:{"Accept":"application/json"}});
@@ -408,64 +483,90 @@
     };
   }
 
-  async function fetchHistorical90d(force){
-    var now=Date.now();
-    if(!force){
-      try{
-        var cached=JSON.parse(localStorage.getItem(CACHE_KEY)||"null");
-        if(cached && now-cached.savedAt<CACHE_TTL && Array.isArray(cached.candles) && cached.candles.length>4000){
-          setProgress(45,"Using cached historical candles…");
-          return cached.candles;
-        }
-      }catch(e){}
-    }
+  // Cache stores compact rows [time, low, high, open, close, volume].
+  function readCache(){
+    try{
+      OLD_CACHE_KEYS.forEach(function(k){ localStorage.removeItem(k); });
+      var rows=JSON.parse(localStorage.getItem(CACHE_KEY)||"[]");
+      if(!Array.isArray(rows)) return [];
+      return rows.map(function(r){
+        return {time:r[0],low:r[1],high:r[2],open:r[3],close:r[4],volume:r[5]};
+      });
+    }catch(e){ return []; }
+  }
 
-    var currentStart=intervalStartMs(now);
-    var end=currentStart;
-    var start=currentStart-HISTORY_DAYS*24*60*60*1000;
-    var chunkBars=299;
-    var totalSpan=end-start;
+  function writeCache(candles){
+    try{
+      localStorage.setItem(CACHE_KEY,JSON.stringify(candles.map(function(c){
+        return [c.time,c.low,c.high,c.open,c.close,c.volume];
+      })));
+    }catch(e){}
+  }
+
+  // Keeps a rolling 90-day cache and only downloads candles it doesn't have.
+  async function loadHistory(){
+    var currentStart=intervalStartMs(Date.now());
+    var windowStart=currentStart-HISTORY_DAYS*24*60*60*1000;
+    var lastComplete=currentStart-BAR_MS;
+
     var all=new Map();
-    var cursor=start;
-    var requestNo=0;
-    var totalReq=Math.ceil(totalSpan/(chunkBars*BAR_MS));
+    readCache().forEach(function(c){
+      if(c.time>=windowStart && c.time<currentStart) all.set(c.time,c);
+    });
+    var cachedCount=all.size;
 
-    while(cursor<=end){
-      var chunkEnd=Math.min(end,cursor+chunkBars*BAR_MS);
-      var path="/products/"+PRODUCT+"/candles?granularity=900&start="+encodeURIComponent(iso(cursor))+"&end="+encodeURIComponent(iso(chunkEnd));
-      var rows=await apiJSON(path);
-      for(var i=0;i<rows.length;i++){
-        var c=parseCandleRow(rows[i]);
-        if(Number.isFinite(c.time) && c.time>=start && c.time<=end) all.set(c.time,c);
-      }
-      requestNo++;
-      setProgress(5+40*(requestNo/Math.max(1,totalReq)),"Downloading 90-day history: "+requestNo+" / "+totalReq+" chunks");
-      cursor=chunkEnd+BAR_MS;
-      await sleep(140);
+    // Re-fetch the newest cached candle in case it was saved mid-update.
+    var from=windowStart;
+    if(cachedCount){
+      var newest=Math.max.apply(null,Array.from(all.keys()));
+      from=Math.max(windowStart,newest);
     }
+
+    var chunks=[];
+    for(var cursor=from;cursor<=lastComplete;cursor+=CHUNK_BARS*BAR_MS){
+      chunks.push([cursor,Math.min(lastComplete,cursor+(CHUNK_BARS-1)*BAR_MS)]);
+    }
+
+    var done=0, next=0;
+    setProgress(5, chunks.length
+      ? (cachedCount ? "Loaded "+cachedCount.toLocaleString()+" cached candles. Downloading "+chunks.length+" new chunk"+(chunks.length===1?"":"s")+"…" : "First visit: downloading 90-day history…")
+      : "History is up to date.");
+
+    async function worker(){
+      while(next<chunks.length){
+        var c=chunks[next++];
+        var path="/products/"+PRODUCT+"/candles?granularity=900&start="+encodeURIComponent(iso(c[0]))+"&end="+encodeURIComponent(iso(c[1]));
+        var rows=await apiJSON(path);
+        for(var i=0;i<rows.length;i++){
+          var k=parseCandleRow(rows[i]);
+          if(Number.isFinite(k.time) && k.time>=windowStart && k.time<currentStart) all.set(k.time,k);
+        }
+        done++;
+        setProgress(5+40*(done/chunks.length),"Downloading history: "+done+" / "+chunks.length+" chunks");
+        await sleep(150);
+      }
+    }
+    var workers=[];
+    for(var w=0;w<Math.min(CONCURRENCY,chunks.length);w++) workers.push(worker());
+    await Promise.all(workers);
 
     var candles=Array.from(all.values()).sort(function(a,b){return a.time-b.time;});
-    try{
-      localStorage.setItem(CACHE_KEY,JSON.stringify({savedAt:now,candles:candles}));
-    }catch(e){}
+    writeCache(candles);
     return candles;
   }
 
   function buildSamples(candles,currentStart){
-    var done=candles.filter(function(c){return c.time<currentStart;}).sort(function(a,b){return a.time-b.time;});
+    var done=candles.filter(function(c){return c.time<currentStart;});
     var samples=[];
     for(var i=40;i<done.length;i++){
       var current=done[i];
-      var prior=done.slice(Math.max(0,i-80),i);
-      var signal=computeSignal(prior);
-      if(!signal) continue;
       if(current.close===current.open) continue;
+      var x=computeFeatures(done.slice(Math.max(0,i-80),i));
+      if(!x) continue;
       samples.push({
         time:current.time,
-        score:signal.score,
+        x:x,
         y:current.close>current.open ? 1 : 0,
-        open:current.open,
-        close:current.close,
         logReturn:Math.log(current.close/current.open)
       });
     }
@@ -474,8 +575,7 @@
   }
 
   function calibrate(candles){
-    var currentStart=intervalStartMs(Date.now());
-    var built=buildSamples(candles,currentStart);
+    var built=buildSamples(candles,intervalStartMs(Date.now()));
     var samples=built.samples;
     completedCandles=built.done;
 
@@ -483,28 +583,28 @@
       throw new Error("Only "+samples.length+" usable historical windows were available. At least "+MIN_WINDOWS+" are required.");
     }
 
-    var split=Math.floor(samples.length*0.70);
-    split=clamp(split,1,samples.length-1);
+    var split=clamp(Math.floor(samples.length*0.70),1,samples.length-1);
     var train=samples.slice(0,split);
     var test=samples.slice(split);
-    var fitted=fitLogistic(train);
-    var moveByScore=fitMoveModel(train);
-    var metrics=evaluate(test,fitted);
 
-    model={
-      a:fitted.a,
-      b:fitted.b,
-      moveByScore:moveByScore,
-      samples:samples.length,
-      train:train.length,
-      test:test.length,
-      accuracy:metrics.accuracy,
-      brier:metrics.brier,
-      trainStart:train[0].time,
-      trainEnd:train[train.length-1].time,
-      testStart:test[0].time,
-      testEnd:test[test.length-1].time
-    };
+    var scaler=fitScaler(train);
+    var Z=train.map(function(s){ return scale(s.x,scaler); });
+    var Y=train.map(function(s){ return s.y; });
+    var w=fitLogistic(Z,Y);
+    var baseRate=clamp(Y.reduce(function(a,b){return a+b;},0)/Y.length,0.001,0.999);
+
+    model={scaler:scaler,w:w,baseRate:baseRate};
+    model.moveBins=fitMoveModel(train,model);
+    var metrics=evaluate(test,model,baseRate);
+
+    model.samples=samples.length;
+    model.train=train.length;
+    model.test=test.length;
+    model.metrics=metrics;
+    model.trainStart=train[0].time;
+    model.trainEnd=train[train.length-1].time;
+    model.testStart=test[0].time;
+    model.testEnd=test[test.length-1].time;
     return model;
   }
 
@@ -523,6 +623,8 @@
     return Number(t.price);
   }
 
+  /* ---------- Local prediction log ---------- */
+
   function loadPredictionHistory(){
     try{
       var h=JSON.parse(localStorage.getItem(PRED_KEY)||"[]");
@@ -534,7 +636,7 @@
     try{ localStorage.setItem(PRED_KEY,JSON.stringify(h.slice(-30))); }catch(e){}
   }
 
-  function settlePreviousIfPossible(startPrice,newStartPrice,newStart){
+  function settlePreviousIfPossible(newStartPrice,newStart){
     var h=loadPredictionHistory();
     if(!h.length) return;
     var last=h[h.length-1];
@@ -546,6 +648,8 @@
       savePredictionHistory(h);
     }
   }
+
+  /* ---------- Rendering ---------- */
 
   function renderHistory(){
     var h=loadPredictionHistory().slice(-8).reverse();
@@ -565,16 +669,43 @@
   }
 
   function renderModel(){
+    var m=model.metrics;
     el("totalWindows").textContent=model.samples.toLocaleString();
-    el("trainWindows").textContent=model.train.toLocaleString();
-    el("testWindows").textContent=model.test.toLocaleString();
-    el("oosAccuracy").textContent=fmtPct(model.accuracy,1);
-    el("brier").textContent=model.brier.toFixed(3);
+    el("splitWindows").textContent=model.train.toLocaleString()+" / "+model.test.toLocaleString();
+    el("oosAccuracy").textContent=fmtPct(m.accuracy,1)+" ±"+(m.accuracyCI*100).toFixed(1);
+    el("baseAccuracy").textContent=fmtPct(m.baseAccuracy,1);
+    el("skill").textContent=(m.skill>=0?"+":"")+(m.skill*100).toFixed(2)+"%";
+    el("skill").className="value "+(m.skill>0?"ok":"warn");
+    el("brier").textContent=m.brier.toFixed(4)+" / "+m.baseBrier.toFixed(4);
+
+    var edge=m.accuracy-m.baseAccuracy;
+    var verdict;
+    if(m.skill>0 && edge>m.accuracyCI){
+      verdict="The model beats the baseline on unseen data by more than the ±"+(m.accuracyCI*100).toFixed(1)+"-point noise band. That's a real (if small) edge over this test period.";
+    }else if(m.skill>0){
+      verdict="The model's probabilities are slightly better than the baseline, but the accuracy gap is inside the ±"+(m.accuracyCI*100).toFixed(1)+"-point noise band, so it may be luck.";
+    }else{
+      verdict="The model does not beat the baseline on unseen data. Treat its calls as close to a coin flip.";
+    }
+    el("verdict").textContent=verdict;
+
     el("rangeText").textContent=
-      "Calibration: "+dateShort(model.trainStart)+" → "+dateShort(model.trainEnd)+
-      ". Out-of-sample verification: "+dateShort(model.testStart)+" → "+dateShort(model.testEnd)+
-      ". The split is chronological and the verification segment is never used to fit the probability curve.";
-    setProgress(100,"Calibration complete. Probability model is frozen from the 70% in-sample segment.");
+      "Train: "+dateShort(model.trainStart)+" → "+dateShort(model.trainEnd)+
+      ". Test: "+dateShort(model.testStart)+" → "+dateShort(model.testEnd)+
+      ". Baseline always predicts the training base rate ("+fmtPct(model.baseRate,1)+" Higher). Log-loss skill above 0% means the model's probabilities beat it.";
+
+    var rows=FEATURE_NAMES.map(function(name,i){ return {name:name,w:model.w[i+1]}; })
+      .sort(function(a,b){ return Math.abs(b.w)-Math.abs(a.w); });
+    var maxW=Math.max.apply(null,rows.map(function(r){return Math.abs(r.w);}))||1;
+    el("weights").innerHTML='<table><tbody>'+rows.map(function(r){
+      var pct=(Math.abs(r.w)/maxW*100).toFixed(0);
+      var color=r.w>=0?"var(--up)":"var(--down)";
+      return '<tr><td>'+r.name+'</td>'+
+        '<td style="width:44%"><div style="height:8px;border-radius:999px;background:#202a3d;overflow:hidden"><div style="height:100%;width:'+pct+'%;background:'+color+'"></div></div></td>'+
+        '<td style="text-align:right;white-space:nowrap;color:'+color+'">'+(r.w>=0?"+":"")+r.w.toFixed(3)+'</td></tr>';
+    }).join("")+'</tbody></table>';
+
+    setProgress(100,"Calibration complete. Model is frozen from the training 70%.");
   }
 
   async function makeLockedPrediction(){
@@ -590,36 +721,26 @@
     }
     if(!currentCandle) throw new Error("The current quarter-hour candle is not available yet. Try again in a few seconds.");
 
-    var prior=completedCandles.filter(function(c){return c.time<start;});
-    var recentPrior=live.candles.filter(function(c){return c.time<start;});
     var merged=new Map();
-    prior.slice(-100).forEach(function(c){merged.set(c.time,c);});
-    recentPrior.forEach(function(c){merged.set(c.time,c);});
+    completedCandles.filter(function(c){return c.time<start;}).slice(-100).forEach(function(c){merged.set(c.time,c);});
+    live.candles.filter(function(c){return c.time<start;}).forEach(function(c){merged.set(c.time,c);});
     var history=Array.from(merged.values()).sort(function(a,b){return a.time-b.time;});
 
-    var s=computeSignal(history);
-    if(!s) throw new Error("Not enough completed candles for the live signal.");
+    var x=computeFeatures(history);
+    if(!x) throw new Error("Not enough completed candles for the live signal.");
 
-    var pHigher=probabilityHigher(s.score,model);
+    var pHigher=probabilityHigher(x,model);
     var direction=pHigher>=0.5 ? "Higher" : "Lower";
     var confidence=direction==="Higher" ? pHigher : 1-pHigher;
-    var predictedMove=moveMagnitude(s.score,model);
-    var signedMove=direction==="Higher" ? predictedMove : -predictedMove;
-    var predictedPrice=currentCandle.open*Math.exp(signedMove);
+    var predictedMove=moveMagnitude(pHigher,model);
+    var predictedPrice=currentCandle.open*Math.exp(direction==="Higher" ? predictedMove : -predictedMove);
 
-    settlePreviousIfPossible(null,currentCandle.open,start);
+    settlePreviousIfPossible(currentCandle.open,start);
 
     var stored=loadPredictionHistory();
     var existing=stored.find(function(x){return x.start===start;});
     if(existing){
       currentPrediction=existing;
-      if(!Number.isFinite(currentPrediction.predictedPrice)){
-        currentPrediction.predictedPrice=predictedPrice;
-        currentPrediction.predictedMove=predictedMove;
-        var existingIndex=stored.findIndex(function(x){return x.start===start;});
-        if(existingIndex>=0) stored[existingIndex]=currentPrediction;
-        savePredictionHistory(stored);
-      }
     }else{
       currentPrediction={
         start:start,
@@ -628,9 +749,9 @@
         direction:direction,
         confidence:confidence,
         pHigher:pHigher,
-        score:s.score,
         predictedPrice:predictedPrice,
         predictedMove:predictedMove,
+        model:"v4",
         createdAt:Date.now()
       };
       stored.push(currentPrediction);
@@ -649,17 +770,14 @@
     el("predictedPrice").textContent=fmtMoney(currentPrediction.predictedPrice);
     el("lockedPrice").textContent=fmtMoney(currentPrediction.lockedPrice);
     el("windowTime").textContent=timeOnly(currentPrediction.start)+" → "+timeOnly(currentPrediction.end);
-    el("signalScore").textContent=(currentPrediction.score>0?"+":"")+currentPrediction.score.toFixed(1);
     el("heroStatus").textContent=
       "Locked at "+timeOnly(currentPrediction.start)+
-      ". The price estimate uses the median 15-minute move from similar-score windows in the 70% calibration set; the confidence and price remain locked for this window.";
+      ". The price estimate uses the median 15-minute move from training windows with similar predicted probability. Confidence and price stay locked for this window.";
   }
 
   function updateCountdown(){
     var now=Date.now();
-    var start=intervalStartMs(now);
-    var end=start+BAR_MS;
-    if(currentPrediction) end=currentPrediction.end;
+    var end=currentPrediction ? currentPrediction.end : intervalStartMs(now)+BAR_MS;
     var ms=Math.max(0,end-now);
     var m=Math.floor(ms/60000), s=Math.floor((ms%60000)/1000);
     el("countdown").textContent=m+":"+String(s).padStart(2,"0");
@@ -667,8 +785,7 @@
 
   async function updateTicker(){
     try{
-      var p=await fetchTicker();
-      el("livePrice").textContent=fmtMoney(p);
+      el("livePrice").textContent=fmtMoney(await fetchTicker());
     }catch(e){}
   }
 
@@ -687,7 +804,7 @@
     }
   }
 
-  async function runAll(force){
+  async function runAll(){
     if(busy) return;
     busy=true;
     el("rerunBtn").disabled=true;
@@ -701,11 +818,11 @@
     setProgress(1,"Preparing historical data…");
 
     try{
-      var candles=await fetchHistorical90d(!!force);
-      setProgress(52,"Building strictly past-only features for each 15-minute window…");
+      var candles=await loadHistory();
+      setProgress(52,"Building past-only features for each 15-minute window…");
       await sleep(30);
       calibrate(candles);
-      setProgress(88,"Running the frozen model over the 30% out-of-sample segment…");
+      setProgress(88,"Scoring the frozen model on the 30% test segment…");
       await sleep(30);
       renderModel();
       busy=false;
@@ -722,7 +839,7 @@
     }
   }
 
-  el("rerunBtn").addEventListener("click",function(){ runAll(true); });
+  el("rerunBtn").addEventListener("click",function(){ runAll(); });
   document.addEventListener("visibilitychange",function(){
     if(document.visibilityState==="visible"){
       boundaryCheck();
@@ -736,7 +853,7 @@
 
   updateCountdown();
   renderHistory();
-  runAll(false);
+  runAll();
 })();
 </script>
 </body>
