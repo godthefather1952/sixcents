@@ -90,7 +90,7 @@
     <div class="row">
       <div>
         <div class="value">Automated historical calibration</div>
-        <div id="backtestStatus" class="status">Preparing 90 days of 15-minute BTC/USD candles…</div>
+        <div id="backtestStatus" class="status">Preparing 12 months of 15-minute BTC/USD candles…</div>
       </div>
       <button id="rerunBtn" type="button">Refit model</button>
     </div>
@@ -181,11 +181,11 @@
   var PRODUCT = "BTC-USD";
   var API = "https://api.exchange.coinbase.com";
   var BAR_MS = 15 * 60 * 1000;
-  var HISTORY_DAYS = 90;
+  var HISTORY_DAYS = 365;
   var MIN_WINDOWS = 3000;
-  var MAX_WINDOWS = 10000;
-  var CACHE_KEY = "sixcents_candles_v4";
-  var OLD_CACHE_KEYS = ["sixcents_history_v3"];
+  var MAX_WINDOWS = 60000;
+  var CACHE_KEY = "candles_v5";
+  var OLD_CACHE_KEYS = ["sixcents_history_v3","sixcents_candles_v4"];
   var PRED_KEY = "sixcents_predictions_v3";
   var CHUNK_BARS = 300;
   var CONCURRENCY = 3;
@@ -516,11 +516,26 @@
     };
   }
 
-  // Cache stores compact rows [time, low, high, open, close, volume].
-  function readCache(){
+  // Cache lives in IndexedDB (a year of candles is too big for localStorage).
+  // Rows are compact: [time, low, high, open, close, volume].
+  function idb(){
+    return new Promise(function(resolve,reject){
+      var req=indexedDB.open("sixcents",1);
+      req.onupgradeneeded=function(){ req.result.createObjectStore("kv"); };
+      req.onsuccess=function(){ resolve(req.result); };
+      req.onerror=function(){ reject(req.error); };
+    });
+  }
+
+  async function readCache(){
     try{
       OLD_CACHE_KEYS.forEach(function(k){ localStorage.removeItem(k); });
-      var rows=JSON.parse(localStorage.getItem(CACHE_KEY)||"[]");
+      var db=await idb();
+      var rows=await new Promise(function(resolve,reject){
+        var r=db.transaction("kv","readonly").objectStore("kv").get(CACHE_KEY);
+        r.onsuccess=function(){ resolve(r.result||[]); };
+        r.onerror=function(){ reject(r.error); };
+      });
       if(!Array.isArray(rows)) return [];
       return rows.map(function(r){
         return {time:r[0],low:r[1],high:r[2],open:r[3],close:r[4],volume:r[5]};
@@ -528,48 +543,69 @@
     }catch(e){ return []; }
   }
 
-  function writeCache(candles){
+  async function writeCache(candles){
     try{
-      localStorage.setItem(CACHE_KEY,JSON.stringify(candles.map(function(c){
-        return [c.time,c.low,c.high,c.open,c.close,c.volume];
-      })));
+      var rows=candles.map(function(c){ return [c.time,c.low,c.high,c.open,c.close,c.volume]; });
+      var db=await idb();
+      await new Promise(function(resolve,reject){
+        var tx=db.transaction("kv","readwrite");
+        tx.objectStore("kv").put(rows,CACHE_KEY);
+        tx.oncomplete=resolve;
+        tx.onerror=function(){ reject(tx.error); };
+      });
     }catch(e){}
   }
 
-  // Keeps a rolling 90-day cache and only downloads candles it doesn't have.
+  async function fetchChunk(c){
+    var path="/products/"+PRODUCT+"/candles?granularity=900&start="+encodeURIComponent(iso(c[0]))+"&end="+encodeURIComponent(iso(c[1]));
+    for(var attempt=0;;attempt++){
+      try{ return await apiJSON(path); }
+      catch(e){
+        if(attempt>=3) throw e;
+        await sleep(800*(attempt+1));
+      }
+    }
+  }
+
+  // Keeps a rolling 12-month cache and only downloads candles it doesn't have:
+  // anything older than the cache (when the window grows) and anything newer.
   async function loadHistory(){
     var currentStart=intervalStartMs(Date.now());
     var windowStart=currentStart-HISTORY_DAYS*24*60*60*1000;
     var lastComplete=currentStart-BAR_MS;
 
     var all=new Map();
-    readCache().forEach(function(c){
+    (await readCache()).forEach(function(c){
       if(c.time>=windowStart && c.time<currentStart) all.set(c.time,c);
     });
     var cachedCount=all.size;
 
-    // Re-fetch the newest cached candle in case it was saved mid-update.
-    var from=windowStart;
+    var ranges=[];
     if(cachedCount){
-      var newest=Math.max.apply(null,Array.from(all.keys()));
-      from=Math.max(windowStart,newest);
+      var keys=Array.from(all.keys());
+      var oldest=Math.min.apply(null,keys), newest=Math.max.apply(null,keys);
+      if(oldest-windowStart>BAR_MS) ranges.push([windowStart,oldest-BAR_MS]);
+      // Re-fetch the newest cached candle in case it was saved mid-update.
+      ranges.push([Math.max(windowStart,newest),lastComplete]);
+    }else{
+      ranges.push([windowStart,lastComplete]);
     }
 
     var chunks=[];
-    for(var cursor=from;cursor<=lastComplete;cursor+=CHUNK_BARS*BAR_MS){
-      chunks.push([cursor,Math.min(lastComplete,cursor+(CHUNK_BARS-1)*BAR_MS)]);
-    }
+    ranges.forEach(function(r){
+      for(var cursor=r[0];cursor<=r[1];cursor+=CHUNK_BARS*BAR_MS){
+        chunks.push([cursor,Math.min(r[1],cursor+(CHUNK_BARS-1)*BAR_MS)]);
+      }
+    });
 
     var done=0, next=0;
     setProgress(5, chunks.length
-      ? (cachedCount ? "Loaded "+cachedCount.toLocaleString()+" cached candles. Downloading "+chunks.length+" new chunk"+(chunks.length===1?"":"s")+"…" : "First visit: downloading 90-day history…")
+      ? (cachedCount ? "Loaded "+cachedCount.toLocaleString()+" cached candles. Downloading "+chunks.length+" new chunk"+(chunks.length===1?"":"s")+"…" : "First visit: downloading 12 months of history (about a minute)…")
       : "History is up to date.");
 
     async function worker(){
       while(next<chunks.length){
-        var c=chunks[next++];
-        var path="/products/"+PRODUCT+"/candles?granularity=900&start="+encodeURIComponent(iso(c[0]))+"&end="+encodeURIComponent(iso(c[1]));
-        var rows=await apiJSON(path);
+        var rows=await fetchChunk(chunks[next++]);
         for(var i=0;i<rows.length;i++){
           var k=parseCandleRow(rows[i]);
           if(Number.isFinite(k.time) && k.time>=windowStart && k.time<currentStart) all.set(k.time,k);
@@ -581,11 +617,14 @@
     }
     var workers=[];
     for(var w=0;w<Math.min(CONCURRENCY,chunks.length);w++) workers.push(worker());
-    await Promise.all(workers);
+    try{
+      await Promise.all(workers);
+    }finally{
+      // Save whatever arrived, so a failed download resumes instead of restarting.
+      await writeCache(Array.from(all.values()).sort(function(a,b){return a.time-b.time;}));
+    }
 
-    var candles=Array.from(all.values()).sort(function(a,b){return a.time-b.time;});
-    writeCache(candles);
-    return candles;
+    return Array.from(all.values()).sort(function(a,b){return a.time-b.time;});
   }
 
   function buildSamples(candles,currentStart){
